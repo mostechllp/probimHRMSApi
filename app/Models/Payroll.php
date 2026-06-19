@@ -1,0 +1,29 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Payroll extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'employee_id',
+        'pay_period_month',
+        'pay_period_year',
+        'status',
+        'current_step',
+        'data'
+    ];
+
+    protected $casts = [
+        'data' => 'array',
+    ];
+
+    public function employee()
+    {
+        return $this->belongsTo(Employee::class);
+    }
+}
