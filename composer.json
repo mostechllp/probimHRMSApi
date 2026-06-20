@@ -12,7 +12,7 @@
         "laravel/framework": "^12.0",
         "laravel/tinker": "^2.10.1",
         "maatwebsite/excel": "^3.1",
-        "php-open-source-saver/jwt-auth": "*",
+        "php-open-source-saver/jwt-auth": "^2.8",
         "spatie/laravel-permission": "^6.25"
     },
     "require-dev": {
@@ -85,7 +85,10 @@
             "pestphp/pest-plugin": true,
             "php-http/discovery": true
         },
-        "process-timeout": 2000
+        "process-timeout": 2000,
+        "platform": {
+            "php": "8.2.12"
+        }
     },
     "minimum-stability": "stable",
     "prefer-stable": true
