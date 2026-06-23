@@ -143,32 +143,33 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::apiResource('projects', ProjectApiController::class);
     Route::get('project-assignments', [ProjectAssignmentApiController::class, 'index']);
     Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show']);
+    Route::get('project-assignments/{id}/working-time', [ProjectAssignmentApiController::class, 'workingTime']);
     Route::post('employees/projects', [ProjectAssignmentApiController::class, 'assign']);
 
     // HR Modules
-    Route::get('designations', [HRApiController::class, 'indexDesignations']);
-    Route::post('designations', [HRApiController::class, 'storeDesignation']);
-    Route::get('designations/{designation}', [HRApiController::class, 'showDesignation']);
-    Route::put('designations/{designation}', [HRApiController::class, 'updateDesignation']);
-    Route::delete('designations/{designation}', [HRApiController::class, 'destroyDesignation']);
+    Route::get('designations', [HRApiController::class, 'indexDesignations'])->middleware('permission:organizations.read');
+    Route::post('designations', [HRApiController::class, 'storeDesignation'])->middleware('permission:organizations.read');
+    Route::get('designations/{designation}', [HRApiController::class, 'showDesignation'])->middleware('permission:organizations.read');
+    Route::put('designations/{designation}', [HRApiController::class, 'updateDesignation'])->middleware('permission:organizations.read');
+    Route::delete('designations/{designation}', [HRApiController::class, 'destroyDesignation'])->middleware('permission:organizations.read');
 
-    Route::get('departments', [HRApiController::class, 'indexDepartments']);
-    Route::post('departments', [HRApiController::class, 'storeDepartment']);
-    Route::get('departments/{department}', [HRApiController::class, 'showDepartment']);
-    Route::put('departments/{department}', [HRApiController::class, 'updateDepartment']);
-    Route::delete('departments/{department}', [HRApiController::class, 'destroyDepartment']);
+    Route::get('departments', [HRApiController::class, 'indexDepartments'])->middleware('permission:organizations.read');
+    Route::post('departments', [HRApiController::class, 'storeDepartment'])->middleware('permission:organizations.read');
+    Route::get('departments/{department}', [HRApiController::class, 'showDepartment'])->middleware('permission:organizations.read');
+    Route::put('departments/{department}', [HRApiController::class, 'updateDepartment'])->middleware('permission:organizations.read');
+    Route::delete('departments/{department}', [HRApiController::class, 'destroyDepartment'])->middleware('permission:organizations.read');
 
     // Leave Management (Admin side)
-    Route::get('leaves', [LeaveApiController::class, 'index'])->middleware('permission:leave.read');
-    Route::get('leaves/{leaveRequest}', [LeaveApiController::class, 'show'])->middleware('permission:leave.read');
-    Route::post('leaves/{leaveRequest}/status', [LeaveApiController::class, 'updateStatus'])->middleware('permission:leave.edit');
+    Route::get('leaves', [LeaveApiController::class, 'index'])->middleware('permission:leaves.read');
+    Route::get('leaves/{leaveRequest}', [LeaveApiController::class, 'show'])->middleware('permission:leaves.read');
+    Route::post('leaves/{leaveRequest}/status', [LeaveApiController::class, 'updateStatus'])->middleware('permission:leaves.edit');
 
     // WFH Requests (Admin side)
-    Route::get('wfh-requests', [WfhApiController::class, 'index'])->middleware('permission:leave.read');
-    Route::get('wfh-requests/{wfhRequest}', [WfhApiController::class, 'show'])->middleware('permission:leave.read');
-    Route::put('wfh-requests/{wfhRequest}', [WfhApiController::class, 'update'])->middleware('permission:leave.edit');
-    Route::delete('wfh-requests/{wfhRequest}', [WfhApiController::class, 'destroy'])->middleware('permission:leave.delete');
-    Route::post('wfh-requests/{wfhRequest}/status', [WfhApiController::class, 'updateStatus'])->middleware('permission:leave.edit');
+    Route::get('wfh-requests', [WfhApiController::class, 'index'])->middleware('permission:wfh-requests.read');
+    Route::get('wfh-requests/{wfhRequest}', [WfhApiController::class, 'show'])->middleware('permission:wfh-requests.read');
+    Route::put('wfh-requests/{wfhRequest}', [WfhApiController::class, 'update'])->middleware('permission:wfh-requests.edit');
+    Route::delete('wfh-requests/{wfhRequest}', [WfhApiController::class, 'destroy'])->middleware('permission:wfh-requests.delete');
+    Route::post('wfh-requests/{wfhRequest}/status', [WfhApiController::class, 'updateStatus'])->middleware('permission:wfh-requests.edit');
 
     // Leave Types (Admin side)
     Route::apiResource('leave-types', LeaveTypeApiController::class)->middleware('permission:settings.read');
@@ -179,9 +180,9 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::post('working-hours', [WorkingHourApiController::class, 'store'])->middleware('permission:settings.edit');
 
     // Leave Allocations
-    Route::get('leave-allocations', [LeaveAllocationApiController::class, 'index'])->middleware('permission:leave.read');
-    Route::get('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'show'])->middleware('permission:leave.read');
-    Route::post('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'update'])->middleware('permission:leave.edit');
+    Route::get('leave-allocations', [LeaveAllocationApiController::class, 'index'])->middleware('permission:leaves.read');
+    Route::get('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'show'])->middleware('permission:leaves.read');
+    Route::post('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'update'])->middleware('permission:leaves.edit');
 
     // Task Reports (Admin)
     Route::apiResource('task-reports', AdminTaskReportApiController::class)->middleware('permission:reports.read');

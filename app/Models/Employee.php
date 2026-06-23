@@ -129,13 +129,6 @@ class Employee extends Model
         return $this->hasMany(LeaveAllocation::class);
     }
 
-    public function projects()
-    {
-        return $this->belongsToMany(Project::class, 'employee_project')
-            ->withPivot('assigned_by', 'deleted_by', 'deleted_at')
-            ->withTimestamps()
-            ->wherePivot('deleted_at', null);
-    }
 
     public function salaryComponents()
     {
@@ -145,5 +138,20 @@ class Employee extends Model
     public function bankDetails()
     {
         return $this->hasMany(EmployeeBankDetail::class);
+    }
+
+    public function projects()
+    {
+        return $this->belongsToMany(
+        Project::class,
+        'employee_project',
+        'employee_id',   // foreign key on pivot
+        'project_id', // related key on pivot
+        'user_id',   // local key on Employee model
+        'id'         // local key on Project model
+    )
+    ->withPivot('assigned_by', 'deleted_by', 'deleted_at')
+    ->withTimestamps()
+    ->wherePivotNull('deleted_at');
     }
 }

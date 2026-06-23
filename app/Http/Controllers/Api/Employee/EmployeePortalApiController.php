@@ -60,8 +60,8 @@ class EmployeePortalApiController extends ApiController
 
             // Format working_hours → "8 hrs 30 mins"
             $minutes = $attendance->working_hours ?? 0;
-            $hours   = intdiv($minutes, 60);
-            $mins    = $minutes % 60;
+            $hours = intdiv($minutes, 60);
+            $mins = $minutes % 60;
 
             if ($minutes == 0) {
                 $attendance->working_hours = '--';
@@ -207,7 +207,7 @@ class EmployeePortalApiController extends ApiController
 
         $timezone = $request->input('timezone', config('app.timezone'));
         session(['employee_timezone' => $timezone]);
-        
+
         $today = Carbon::now($timezone)->toDateString();
 
         $alreadyPunched = AttendanceLog::where('userid', $user->id)
@@ -275,15 +275,15 @@ class EmployeePortalApiController extends ApiController
             if ($submittedProjectTimes) {
                 foreach ($submittedProjectTimes as $pt) {
                     ProjectTimeLog::updateOrCreate(
-                        ['employee_id' => $user->id, 'project_id' => $pt['project_id'], 'date' => $logDate],
+                        ['user_id' => $employee->id, 'project_id' => $pt['project_id'], 'date' => $logDate],
                         ['time_taken_minutes' => $pt['time_minutes']]
                     );
                 }
             }
         }
 
-        $timezone = $request->input('timezone', config('app.timezone'));
-        $punchIn = Carbon::parse($log->punch_in);
+        $timezone = $request->input('timezone', $log->timezone ?? config('app.timezone'));
+        $punchIn = Carbon::parse($log->punch_in, $timezone);
 
         if ($request->filled('punch_out_time')) {
             $punchOutInput = $request->punch_out_time;
@@ -291,7 +291,7 @@ class EmployeePortalApiController extends ApiController
 
             // Case 1: time-only input like "18:00" or "18:00:00"
             if (preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $punchOutInput)) {
-                $now = Carbon::parse($punchOutDate . ' ' . $punchOutInput);
+                $now = Carbon::parse($punchOutDate . ' ' . $punchOutInput, $timezone);
                 if ($now->lt($punchIn)) {
                     $now->addDay();
                 }
@@ -364,7 +364,7 @@ class EmployeePortalApiController extends ApiController
         }
 
         $timezone = $request->input('timezone', config('app.timezone'));
-        
+
         $break = $log->breaks()->create([
             'start_time' => Carbon::now($timezone),
         ]);

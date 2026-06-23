@@ -21,7 +21,7 @@ class EmployeeApiController extends ApiController
     public function index(Request $request): JsonResponse
     {
         $status = $request->get('status', 'active');
-        $perPage = $request->get('per_page', 15);
+        $perPage = $request->get('per_page', 100);
 
         $query = Employee::with(['user.company', 'user.organization', 'user.department', 'user.designation', 'salaryComponents', 'bankDetails'])
             ->whereHas('user', function ($q) {

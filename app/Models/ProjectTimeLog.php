@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class ProjectTimeLog extends Model
 {
     protected $fillable = [
-        'employee_id',
+        'user_id',
         'project_id',
         'date',
         'time_taken_minutes'
@@ -15,7 +15,7 @@ class ProjectTimeLog extends Model
 
     public function user()
     {
-        return $this->belongsTo(User::class, 'employee_id');
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     public function project()

@@ -143,4 +143,12 @@ class User extends Authenticatable implements JWTSubject
     {
         return $this->belongsTo(Designation::class, 'designation_id');
     }
+
+    public function projects()
+    {
+        return $this->belongsToMany(Project::class, 'employee_project', 'employee_id', 'project_id')
+            ->withPivot('assigned_by', 'deleted_by', 'deleted_at')
+            ->withTimestamps()
+            ->wherePivot('deleted_at', null);
+    }
 }

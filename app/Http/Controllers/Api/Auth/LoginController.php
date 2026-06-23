@@ -201,9 +201,9 @@ class LoginController extends ApiController
         if (!$user->role)
             return [];
 
-        if ($user->role->name === 'Admin') {
-            return ['all' => true];
-        }
+        // if ($user->role->name === 'Admin') {
+        //     return ['all' => true];
+        // }
 
         return $user->role->permissions->mapWithKeys(function ($p) {
             return [
@@ -221,9 +221,9 @@ class LoginController extends ApiController
         if (!$user->role)
             return [];
 
-        if ($user->role->name === 'Admin') {
-            return \App\Models\Module::where('status', 'active')->get();
-        }
+        // if ($user->role->name === 'Admin') {
+        //     return \App\Models\Module::where('status', 'active')->get();
+        // }
 
         return $user->role->permissions()
             ->where('can_read', true)

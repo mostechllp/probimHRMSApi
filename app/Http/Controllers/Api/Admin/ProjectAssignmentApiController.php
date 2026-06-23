@@ -4,11 +4,15 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Employee;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
 class ProjectAssignmentApiController extends ApiController
 {
+    /**
+     * Display a listing of employees and their assigned projects.
+     */
     /**
      * Display a listing of employees and their assigned projects.
      */
@@ -20,15 +24,7 @@ class ProjectAssignmentApiController extends ApiController
             $query->where('id', $request->employee_id);
         }
 
-        $employees = $query->get()->map(function ($employee) {
-            $employee->projects->each(function ($project) use ($employee) {
-                $project->project_time = \App\Models\ProjectTimeLog::where('employee_id', $employee->user_id)
-                    ->where('project_id', $project->id)
-                    ->sum('time_taken_minutes');
-            });
-            return $employee;
-        });
-
+        $employees = $query->get();
         return $this->success($employees);
     }
 
@@ -37,42 +33,46 @@ class ProjectAssignmentApiController extends ApiController
      */
     public function show($id): JsonResponse
     {
-        $employee = Employee::with(['projects.projectManager.user', 'projects.teamLead.user'])->find($id);
+        $employee = Employee::with('projects')->find($id);
 
         if (!$employee) {
             return $this->error('Employee not found', 404);
         }
 
         $formatEmployee = function ($emp) {
-            if (!$emp)
+            if (!$emp) {
                 return null;
+            }
+
             return [
                 'id' => $emp->id,
                 'name' => trim($emp->first_name . ' ' . $emp->last_name),
                 'employee_id' => $emp->employee_id,
                 'avatar' => $emp->avatar,
-                'email' => $emp->company_email ?? ($emp->user->email ?? $emp->personal_email),
+                'email' => $emp->company_email ?? $emp->personal_email,
             ];
         };
 
-        $projects = $employee->projects->map(function ($project) use ($formatEmployee, $employee) {
-            $timeSpent = \App\Models\ProjectTimeLog::where('employee_id', $employee->user_id)
-                ->where('project_id', $project->id)
-                ->sum('time_taken_minutes');
+        $projects = $employee->projects->map(function ($project) use ($formatEmployee) {
+
+            $manager = Employee::where('user_id', $project->project_manager_id)->first();
+
+            $lead = Employee::where('user_id', $project->team_lead_id)->first();
 
             return [
                 'id' => $project->id,
                 'name' => $project->name,
                 'description' => $project->description,
-                'project_manager' => $formatEmployee($project->projectManager),
-                'team_lead' => $formatEmployee($project->teamLead),
+                'project_manager' => $formatEmployee($manager),
+                'team_lead' => $formatEmployee($lead),
                 'assigned_by' => $project->pivot->assigned_by,
                 'assigned_at' => $project->pivot->created_at,
-                'project_time' => $timeSpent,
             ];
         });
 
-        return $this->success(['projects' => $projects]);
+        return $this->success([
+            'projects' => $projects
+        ]);
     }
 
     /**
@@ -142,5 +142,49 @@ class ProjectAssignmentApiController extends ApiController
         $employee->load('projects');
 
         return $this->success($employee, 'Projects assigned successfully');
+    }
+
+    /**
+     * Get employee's working time in each project assigned to them (daily breakdown).
+     */
+    public function workingTime($id): JsonResponse
+    {
+        $employee = Employee::with('projects')->find($id);
+
+        if (!$employee) {
+            return $this->error('Employee not found', 404);
+        }
+
+        $projectTimes = $employee->projects->map(function ($project) use ($employee) {
+            // Note: ProjectTimeLog uses 'user_id' column to store employee ID based on recent updates
+            $dailyLogs = \App\Models\ProjectTimeLog::where('user_id', $employee->id)
+                ->where('project_id', $project->id)
+                ->orderBy('date', 'desc')
+                ->get();
+
+            $dailyTimes = $dailyLogs->map(function ($log) {
+                return [
+                    'date' => $log->date,
+                    'working_time_minutes' => (int) $log->time_taken_minutes,
+                    'working_time_formatted' => floor($log->time_taken_minutes / 60) . ' hours ' . ($log->time_taken_minutes % 60) . ' mins'
+                ];
+            });
+
+            $totalSpentMinutes = $dailyLogs->sum('time_taken_minutes');
+
+            return [
+                'project_id' => $project->id,
+                'project_name' => $project->name,
+                'total_working_time_minutes' => (int) $totalSpentMinutes,
+                'total_working_time_formatted' => floor($totalSpentMinutes / 60) . ' hours ' . ($totalSpentMinutes % 60) . ' mins',
+                'daily_logs' => $dailyTimes
+            ];
+        });
+
+        return $this->success([
+            'employee_id' => $employee->id,
+            'employee_name' => trim($employee->first_name . ' ' . $employee->last_name),
+            'project_times' => $projectTimes
+        ]);
     }
 }

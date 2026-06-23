@@ -63,8 +63,8 @@ class AttendanceApiController extends ApiController
     //         'stats' => $this->getStats()
     //     ]);
     // }
-    
-     public function index(Request $request): JsonResponse
+
+    public function index(Request $request): JsonResponse
     {
         $perPage = 100;
         $companyId = $request->get('company_id');
@@ -138,8 +138,15 @@ class AttendanceApiController extends ApiController
                 : '--';
             // Output → "08 Jun 2026, 12:32 PM"
 
-            // Format working_hours → "8 hrs 30 mins"
+            // Calculate working_hours dynamically if it is 0 in DB (to fix past data)
             $minutes = $log->working_hours ?? 0;
+            
+            if ($minutes == 0 && $log->getRawOriginal('punch_in') && $log->getRawOriginal('punch_out')) {
+                $in = Carbon::parse($log->getRawOriginal('punch_in'));
+                $out = Carbon::parse($log->getRawOriginal('punch_out'));
+                $minutes = max(0, $in->diffInMinutes($out));
+            }
+
             $hours = intdiv($minutes, 60);
             $mins = $minutes % 60;
 
@@ -206,7 +213,7 @@ class AttendanceApiController extends ApiController
                 $upload->update(['status' => 'completed', 'progress' => 100]);
 
                 return $this->success($upload, 'Attendance imported successfully');
-            } 
+            }
             // Dispatch background job for .dat/.txt
             ProcessAttendanceJob::dispatch($upload->id);
 
