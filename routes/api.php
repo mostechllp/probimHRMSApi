@@ -86,6 +86,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
 
     // Employees
     Route::get('employees', [EmployeeApiController::class, 'index'])->middleware('permission:employees.read');
+    Route::get('employees/salary-packages', [EmployeeOnboardingApiController::class, 'getSalaryPackages'])->middleware('permission:employees.edit');
     Route::get('employees/{employee}', [EmployeeApiController::class, 'show'])->middleware('permission:employees.read');
     Route::post('employees', [EmployeeApiController::class, 'store'])->middleware('permission:employees.edit');
     Route::put('employees/{employee}', [EmployeeApiController::class, 'update'])->middleware('permission:employees.edit');
@@ -99,7 +100,6 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::post('employees/onboard/salary', [EmployeeOnboardingApiController::class, 'saveSalary'])->middleware('permission:employees.edit');
     Route::post('employees/onboard/banks', [EmployeeOnboardingApiController::class, 'saveBanks'])->middleware('permission:employees.edit');
     Route::post('employees/onboard/complete', [EmployeeOnboardingApiController::class, 'complete'])->middleware('permission:employees.edit');
-
     // Employee Bank Details
     Route::put('bank-details/{id}', [EmployeeBankDetailApiController::class, 'update'])->middleware('permission:employees.edit');
     Route::delete('bank-details/{id}', [EmployeeBankDetailApiController::class, 'destroy'])->middleware('permission:employees.edit');
@@ -145,6 +145,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show']);
     Route::get('project-assignments/{id}/working-time', [ProjectAssignmentApiController::class, 'workingTime']);
     Route::post('employees/projects', [ProjectAssignmentApiController::class, 'assign']);
+    Route::delete('project-assignments/{id}/all', [ProjectAssignmentApiController::class, 'removeAllAssignments']);
 
     // HR Modules
     Route::get('designations', [HRApiController::class, 'indexDesignations'])->middleware('permission:organizations.read');

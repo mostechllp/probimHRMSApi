@@ -275,7 +275,7 @@ class EmployeePortalApiController extends ApiController
             if ($submittedProjectTimes) {
                 foreach ($submittedProjectTimes as $pt) {
                     ProjectTimeLog::updateOrCreate(
-                        ['user_id' => $employee->id, 'project_id' => $pt['project_id'], 'date' => $logDate],
+                        ['user_id' => $user->id, 'project_id' => $pt['project_id'], 'date' => $logDate],
                         ['time_taken_minutes' => $pt['time_minutes']]
                     );
                 }

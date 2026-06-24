@@ -23,7 +23,7 @@ class EmployeeApiController extends ApiController
         $status = $request->get('status', 'active');
         $perPage = $request->get('per_page', 100);
 
-        $query = Employee::with(['user.company', 'user.organization', 'user.department', 'user.designation', 'salaryComponents', 'bankDetails'])
+        $query = Employee::with(['user.company', 'user.organization', 'user.department', 'user.designation', 'salaryPackages.salaryComponents', 'bankDetails'])
             ->whereHas('user', function ($q) {
                 $q->whereNotIn('type', ['admin']);
             });
@@ -93,7 +93,7 @@ class EmployeeApiController extends ApiController
 
     public function show(Employee $employee): JsonResponse
     {
-        $employee->load(['user.company', 'user.organization', 'user.department', 'user.designation', 'salaryComponents', 'bankDetails']);
+        $employee->load(['user.company', 'user.organization', 'user.department', 'user.designation', 'salaryPackages.salaryComponents', 'bankDetails']);
         return $this->success($employee);
     }
 

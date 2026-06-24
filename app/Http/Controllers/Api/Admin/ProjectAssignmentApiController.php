@@ -101,7 +101,7 @@ class ProjectAssignmentApiController extends ApiController
         // Detach (Soft delete)
         if ($toDetach->isNotEmpty()) {
             \Illuminate\Support\Facades\DB::table('employee_project')
-                ->where('employee_id', $employee->id)
+                ->where('employee_id', $employee->user_id)
                 ->whereIn('project_id', $toDetach)
                 ->whereNull('deleted_at')
                 ->update([
@@ -115,7 +115,7 @@ class ProjectAssignmentApiController extends ApiController
         foreach ($newProjectIds as $projectId) {
             if (!$existingProjects->contains($projectId)) {
                 $existingPivot = \Illuminate\Support\Facades\DB::table('employee_project')
-                    ->where('employee_id', $employee->id)
+                    ->where('employee_id', $employee->user_id)
                     ->where('project_id', $projectId)
                     ->first();
 
@@ -149,7 +149,7 @@ class ProjectAssignmentApiController extends ApiController
      */
     public function workingTime($id): JsonResponse
     {
-        $employee = Employee::with('projects')->find($id);
+        $employee = User::with('projects')->find($id);
 
         if (!$employee) {
             return $this->error('Employee not found', 404);
@@ -186,5 +186,28 @@ class ProjectAssignmentApiController extends ApiController
             'employee_name' => trim($employee->first_name . ' ' . $employee->last_name),
             'project_times' => $projectTimes
         ]);
+    }
+
+    /**
+     * Remove all project assignments for an employee.
+     */
+    public function removeAllAssignments($id): JsonResponse
+    {
+        $employee = Employee::find($id);
+
+        if (!$employee) {
+            return $this->error('Employee not found', 404);
+        }
+
+        \Illuminate\Support\Facades\DB::table('employee_project')
+            ->where('employee_id', $employee->user_id)
+            ->whereNull('deleted_at')
+            ->update([
+                'deleted_by' => auth()->id(),
+                'deleted_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+        return $this->success(null, 'All project assignments removed successfully.');
     }
 }
