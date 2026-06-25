@@ -29,6 +29,9 @@ return new class extends Migration
             $table->decimal('punch_out_latitude', 10, 8)->nullable();
             $table->decimal('punch_out_longitude', 11, 8)->nullable();
             $table->text('punch_out_address')->nullable();
+            $table->integer('working_hours')->nullable();
+            $table->string('timezone')->nullable();
+            $table->string('work_location')->nullable();
 
             $table->integer('created_by')->nullable();
             $table->integer('deleted_by')->nullable();

@@ -140,7 +140,6 @@ class EmployeeOnboardingApiController extends ApiController
         $request->validate([
             'payment_cycle' => 'required|string|max:255',
             'packages' => 'required|array',
-            'packages.*.id' => 'nullable|integer',
             'packages.*.name' => 'required|string|max:255',
             'packages.*.currency' => 'required|string|max:255',
             'packages.*.is_active' => 'required|boolean',
@@ -159,33 +158,22 @@ class EmployeeOnboardingApiController extends ApiController
 
             if ($request->has('packages') && is_array($request->packages)) {
                 foreach ($request->packages as $pkgKey => $packageData) {
-                    if (!empty($packageData['id'])) {
-                        $package = EmployeeSalaryPackage::find($packageData['id']);
-                        if ($package) {
-                            $package->update([
-                                'name' => $packageData['name'],
-                                'is_active' => $packageData['is_active'] ?? true,
-                            ]);
-                        } else {
-                            $package = EmployeeSalaryPackage::create([
-                                'name' => $packageData['name'],
-                                'is_active' => $packageData['is_active'] ?? true,
-                            ]);
-                        }
-                    } else {
-                        $package = EmployeeSalaryPackage::firstOrCreate(
-                            ['name' => $packageData['name']],
-                            [
-                                'is_active' => $packageData['is_active'] ?? true
-                            ]
-                        );
-                    }
+                    $package = EmployeeSalaryPackage::firstOrCreate(
+                        [
+                            'employee_id' => $employee->id,
+                            'name' => $packageData['name'],
+                            'currency' => $packageData['currency'] ?? 'AED',
+                        ],
+                        [
+                            'is_active' => $packageData['is_active'] ?? true
+                        ]
+                    );
+
 
                     if (isset($packageData['salary_components']) && is_array($packageData['salary_components'])) {
                         foreach ($packageData['salary_components'] as $component) {
                             $employee->salaryComponents()->create([
                                 'employee_salary_package_id' => $package->id,
-                                'currency' => $packageData['currency'] ?? 'USD',
                                 'component_name' => $component['component_name'],
                                 'value' => $component['value']
                             ]);

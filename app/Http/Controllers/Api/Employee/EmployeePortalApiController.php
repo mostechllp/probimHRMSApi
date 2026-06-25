@@ -188,7 +188,8 @@ class EmployeePortalApiController extends ApiController
             'punch_in_latitude' => 'nullable|numeric',
             'punch_in_longitude' => 'nullable|numeric',
             'punch_in_address' => 'nullable|string',
-            'timezone' => 'nullable|string|timezone'
+            'timezone' => 'nullable|string|timezone',
+            'work_location' => 'nullable|string'
         ]);
         $user = auth('api')->user();
         $employee = $user ? $user->employee : null;
@@ -228,7 +229,8 @@ class EmployeePortalApiController extends ApiController
             'punch_in_latitude' => $request->input('punch_in_latitude'),
             'punch_in_longitude' => $request->input('punch_in_longitude'),
             'punch_in_address' => $request->input('punch_in_address'),
-            'timezone' => $timezone
+            'timezone' => $timezone,
+            'work_location' => $request->input('work_location'),
         ]);
 
         return $this->success($log, 'Punched in successfully.', 201);

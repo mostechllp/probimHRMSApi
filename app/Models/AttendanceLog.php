@@ -11,7 +11,7 @@ class AttendanceLog extends Model
     protected $fillable = [
         'company_id', 'userid', 'log_date', 'punch_in', 'punch_out', 'status', 'device_id', 'log_status',
         'attendance_status', 'punch_in_latitude', 'punch_in_longitude', 'punch_in_address',
-        'punch_out_latitude', 'punch_out_longitude', 'punch_out_address', 'timezone','working_hours'
+        'punch_out_latitude', 'punch_out_longitude', 'punch_out_address', 'timezone','working_hours', 'work_location'
     ];
 
     public function company()

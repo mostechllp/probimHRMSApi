@@ -105,6 +105,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::delete('bank-details/{id}', [EmployeeBankDetailApiController::class, 'destroy'])->middleware('permission:employees.edit');
 
     // Employee Salary Components
+    Route::post('salary-components', [EmployeeSalaryComponentApiController::class, 'store'])->middleware('permission:employees.edit');
     Route::put('salary-components/{id}', [EmployeeSalaryComponentApiController::class, 'update'])->middleware('permission:employees.edit');
     Route::delete('salary-components/{id}', [EmployeeSalaryComponentApiController::class, 'destroy'])->middleware('permission:employees.edit');
 
@@ -250,6 +251,10 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
 
     // Payroll Management
     Route::prefix('payroll')->group(function () {
+        Route::post('calculate', [PayrollController::class, 'calculateMonthlySalary']);
+        Route::post('overtime', [PayrollController::class, 'calculateOvertime']);
+        Route::post('summary', [PayrollController::class, 'calculateTotals']);
+        Route::get('/', [PayrollController::class, 'index']);
         Route::get('draft/{employee_id}', [PayrollController::class, 'getDraft']);
         Route::post('save-step', [PayrollController::class, 'saveStep']);
         Route::post('submit', [PayrollController::class, 'submitPayroll']);
