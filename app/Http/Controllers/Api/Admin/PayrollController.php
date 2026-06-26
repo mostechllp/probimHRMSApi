@@ -211,7 +211,9 @@ class PayrollController extends Controller
 
             $requiredMinutes = 0;
             if ($workingHour && $workingHour->is_enabled) {
-                $requiredMinutes = Carbon::parse($workingHour->end_time)->diffInMinutes(Carbon::parse($workingHour->start_time));
+                $start = Carbon::createFromTimeString($workingHour->start_time);
+                $end   = Carbon::createFromTimeString($workingHour->end_time);
+                $requiredMinutes = $start->diffInMinutes($end);
             }
 
             $logsForDate = $projectLogsQuery->where('date', $date);
@@ -570,6 +572,85 @@ class PayrollController extends Controller
     }
 
     /**
+     * Show a single payroll record by ID.
+     */
+    public function show($id): JsonResponse
+    {
+        $payroll = Payroll::with('employee')->find($id);
+
+        if (!$payroll) {
+            return response()->json(['success' => false, 'message' => 'Payroll record not found'], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data'    => array_merge($this->formatPayroll($payroll), ['step_data' => $payroll->data]),
+        ]);
+    }
+
+    /**
+     * Update a payroll record (step data, status, etc.) by ID.
+     */
+    public function update(Request $request, $id): JsonResponse
+    {
+        $request->validate([
+            'status'    => 'sometimes|in:draft,completed',
+            'step'      => 'sometimes|integer|min:1|max:6',
+            'step_data' => 'sometimes|array',
+        ]);
+
+        $payroll = Payroll::find($id);
+
+        if (!$payroll) {
+            return response()->json(['success' => false, 'message' => 'Payroll record not found'], 404);
+        }
+
+        // Update step data if provided
+        if ($request->has('step') && $request->has('step_data')) {
+            $step        = (int) $request->step;
+            $currentData = $payroll->data ?? [];
+            $currentData["step_{$step}"] = $request->step_data;
+            $payroll->data = $currentData;
+
+            if ($step >= ($payroll->current_step ?? 1)) {
+                $payroll->current_step = min(6, $step + 1);
+            }
+        }
+
+        // Update status if provided (only allow rolling back to draft or completing)
+        if ($request->has('status')) {
+            $payroll->status = $request->status;
+        }
+
+        $payroll->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Payroll updated successfully',
+            'data'    => array_merge($this->formatPayroll($payroll), ['step_data' => $payroll->data]),
+        ]);
+    }
+
+    /**
+     * Delete a payroll record by ID.
+     */
+    public function destroy($id): JsonResponse
+    {
+        $payroll = Payroll::find($id);
+
+        if (!$payroll) {
+            return response()->json(['success' => false, 'message' => 'Payroll record not found'], 404);
+        }
+
+        $payroll->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Payroll deleted successfully',
+        ]);
+    }
+
+    /**
      * Shared helper: resolve and format a single Payroll record.
      *
      * Also self-heals old records that were saved with employee_id = NULL
@@ -643,6 +724,8 @@ class PayrollController extends Controller
             ? trim($employee->first_name . ' ' . $employee->last_name)
             : null;
 
+        $avatarUrl = $employee?->avatar_url;
+
         // ------------------------------------------------------------------
         // 4. Payment date = updated_at when status is completed
         // ------------------------------------------------------------------
@@ -654,6 +737,7 @@ class PayrollController extends Controller
             'id'            => $payroll->id,
             'employee_name' => $employeeName,
             'employee_id'   => $payroll->user_id,
+            'avatar'        => $avatarUrl,
             'month'         => $payroll->pay_period_month,
             'year'          => $payroll->pay_period_year,
             'net_pay'       => $netPay,

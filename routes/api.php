@@ -86,7 +86,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
 
     // Employees
     Route::get('employees', [EmployeeApiController::class, 'index'])->middleware('permission:employees.read');
-    Route::get('employees/salary-packages', [EmployeeOnboardingApiController::class, 'getSalaryPackages'])->middleware('permission:employees.edit');
+    Route::get('employees/salary-packages/{id}', [EmployeeOnboardingApiController::class, 'getSalaryPackages'])->middleware('permission:employees.edit');
     Route::get('employees/{employee}', [EmployeeApiController::class, 'show'])->middleware('permission:employees.read');
     Route::post('employees', [EmployeeApiController::class, 'store'])->middleware('permission:employees.edit');
     Route::put('employees/{employee}', [EmployeeApiController::class, 'update'])->middleware('permission:employees.edit');
@@ -255,10 +255,13 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::post('overtime', [PayrollController::class, 'calculateOvertime']);
         Route::post('summary', [PayrollController::class, 'calculateTotals']);
         Route::get('/', [PayrollController::class, 'index']);
+        Route::get('history', [PayrollController::class, 'history']);
         Route::get('draft/{employee_id}', [PayrollController::class, 'getDraft']);
         Route::post('save-step', [PayrollController::class, 'saveStep']);
         Route::post('submit', [PayrollController::class, 'submitPayroll']);
-        Route::get('history', [PayrollController::class, 'history']);
+        Route::get('{id}', [PayrollController::class, 'show']);
+        Route::put('{id}', [PayrollController::class, 'update']);
+        Route::delete('{id}', [PayrollController::class, 'destroy']);
     });
 });
 

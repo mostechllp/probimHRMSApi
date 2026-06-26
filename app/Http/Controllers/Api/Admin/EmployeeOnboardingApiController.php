@@ -112,10 +112,10 @@ class EmployeeOnboardingApiController extends ApiController
         return $this->success($employee->fresh()->load('user'), 'Employee details saved successfully');
     }
 
-    public function getSalaryPackages(): JsonResponse
+    public function getSalaryPackages($id): JsonResponse
     {
 
-        $packages = EmployeeSalaryPackage::all();
+        $packages = EmployeeSalaryPackage::where('employee_id', $id)->get();
 
         return $this->success($packages, 'Salary packages fetched successfully');
     }

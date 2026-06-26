@@ -10,7 +10,7 @@ class Payroll extends Model
     use HasFactory;
 
     protected $fillable = [
-        'employee_id',
+        'user_id',
         'pay_period_month',
         'pay_period_year',
         'status',
@@ -24,6 +24,6 @@ class Payroll extends Model
 
     public function employee()
     {
-        return $this->belongsTo(Employee::class);
+        return $this->belongsTo(Employee::class, 'user_id', 'user_id');
     }
 }
