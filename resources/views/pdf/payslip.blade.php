@@ -4,118 +4,250 @@
     <meta charset="utf-8">
     <title>Payslip</title>
     <style>
-        body { font-family: sans-serif; font-size: 13px; color: #333; }
-        .header { text-align: center; margin-bottom: 20px; }
-        .header h2 { margin: 0 0 4px; font-size: 20px; }
-        .meta { width: 100%; margin-bottom: 16px; border-collapse: collapse; }
-        .meta td { padding: 4px 8px; width: 50%; }
-        .table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-        .table th, .table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        .table th { background-color: #f2f2f2; }
-        .total td, .total th { font-weight: bold; background-color: #e8f5e9; }
-        .conversion-note { font-size: 11px; color: #888; margin-bottom: 12px; }
-        .section-title { font-weight: bold; margin: 14px 0 4px; font-size: 13px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+        body { font-family: sans-serif; font-size: 12px; color: #1f2937; margin: 0; padding: 0; }
+        
+        table { page-break-inside: auto; }
+        tr    { page-break-inside: avoid; page-break-after: auto; }
+        thead { display: table-header-group; }
+        tfoot { display: table-footer-group; }
+
+        .brand-bar { width: 100%; background-color: #1e293b; padding: 18px 24px; margin-bottom: 18px; }
+        .brand-bar td { color: #ffffff; vertical-align: middle; }
+        .brand-bar .company-name { font-size: 20px; font-weight: bold; }
+        .brand-bar .company-sub { font-size: 10px; color: #cbd5e1; margin-top: 2px; }
+        .brand-bar .payslip-tag { font-size: 16px; font-weight: bold; text-align: right; letter-spacing: 1px; }
+        .brand-bar .payslip-ref { font-size: 10px; color: #cbd5e1; text-align: right; margin-top: 2px; }
+
+        .stats-strip { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+        .stats-strip td { width: 25%; background-color: #f1f5f9; border: 1px solid #e2e8f0; padding: 12px 14px; text-align: center; }
+        .stats-strip .stat-label { font-size: 9px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stats-strip .stat-value { font-size: 14px; font-weight: bold; color: #1e293b; margin-top: 4px; }
+        .stats-strip .stat-value.highlight { color: #15803d; }
+
+        .details-grid { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+        .details-grid td { width: 50%; vertical-align: top; padding: 0 6px; }
+        .details-grid td:first-child { padding-left: 0; }
+        .details-grid td:last-child { padding-right: 0; }
+
+        .detail-card { border: 1px solid #e2e8f0; border-radius: 4px; padding: 12px 14px; }
+        .detail-card h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #1e293b; border-bottom: 2px solid #1e293b; padding-bottom: 5px; }
+        .detail-row { padding: 3px 0; }
+        .detail-row .label { color: #64748b; display: inline-block; width: 100px; }
+        .detail-row .value { font-weight: bold; color: #1f2937; }
+
+        .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold; padding: 6px 0; margin-bottom: 4px; border-bottom: 2px solid; }
+        .section-title.earnings { color: #2e573e; border-color: #7f9487; }
+        .section-title.deductions { color: #505c66; border-color: #888591; }
+
+        .line-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+        .line-table td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; }
+        .line-table td.amt { text-align: right; }
+        .line-table tr.subtotal td { border-top: 2px solid #1e293b; border-bottom: none; font-weight: bold; padding-top: 8px; }
+
+        .net-bar { width: 100%; background-color: #5f757c; padding: 14px 24px; margin-top: 6px; }
+        .net-bar td { color: #ffffff; }
+        .net-bar .net-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .net-bar .net-value { font-size: 20px; font-weight: bold; text-align: right; }
+
+        .footer-note { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 20px; }
     </style>
 </head>
 <body>
 
-    <div class="header">
-        <h2>Payslip</h2>
-    </div>
-
     @php
         $data      = $payroll->data ?? [];
         $employee  = $payroll->employee;
-        $currency  = $data['currency'] ?? 'AED';
-        $convFrom  = $data['conversion_from'] ?? null;
-        $convRate  = $data['conversion_rate'] ?? null;
+        $currency  = $payroll->currency ?? 'AED';
 
-        $step6 = $data['step_6'] ?? [];
-        $step4 = $data['step_4'] ?? [];
-        $step3 = $data['step_3'] ?? [];
+        $monthName = \Carbon\Carbon::createFromFormat('m', $payroll->pay_period_month)->format('F');
+        $yearFull  = $payroll->pay_period_year;
+        
+        $paymentDate = $payroll->updated_at ? $payroll->updated_at->format('Y-m-d') : date('Y-m-d');
+        $paymentId   = 'PS' . $payroll->pay_period_year . sprintf('%02d', $payroll->pay_period_month) . $payroll->id;
+
+        $empName     = trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? ''));
+        $eid         = $employee->employee_id ?? $employee->user_id ?? 'N/A';
+        $designation = $employee->user->designation->name ?? 'N/A';
+        $doj         = $employee->joining_date ?? 'N/A';
+
+        $bankDetails = $employee->bankDetails->first() ?? null;
+        $accountNo   = $bankDetails->account_number ?? 'N/A';
+        $bankName    = $bankDetails->bank_name ?? 'N/A';
+        $ifsc        = $bankDetails->ifsc_code ?? $bankDetails->swift_code ?? 'N/A';
+        $branch      = $bankDetails->branch_name ?? 'N/A';
+        $upiId       = $bankDetails->upi_id ?? 'N/A';
+        $upiNo       = $bankDetails->upi_number ?? 'N/A';
+
+        $workedDays  = $data['step_2']['total_worked_days'] ?? $data['step_1']['total_worked_days'] ?? $data['step_5']['total_worked_days'] ?? 0;
+        $daysInMonth = 30;
+
+        // --- Earnings (Table wise per package) ---
+        $packagesEarnings = [];
+        $locationBreakdown = $data['step_2']['location_breakdown'] ?? $data['step_1']['location_breakdown'] ?? [];
+        
+        foreach ($locationBreakdown as $loc) {
+            $pkgName = $loc['package']['name'] ?? $loc['location_name'] ?? 'Unknown';
+            $pkgCurrency = $loc['currency']['code'] ?? 'AED';
+            
+            $pkgComponents = [];
+            foreach ($loc['salary_components'] ?? [] as $comp) {
+                $pkgComponents[$comp['name'] ?? 'Unknown'] = $comp['amount'] ?? 0;
+            }
+            
+            $packagesEarnings[] = [
+                'name' => $pkgName,
+                'currency' => $pkgCurrency,
+                'components' => $pkgComponents,
+                'worked_days' => $loc['worked_days'] ?? 0,
+                'subtotal' => $loc['subtotal'] ?? array_sum($pkgComponents)
+            ];
+        }
+
+        $totalWorkedDays = array_sum(array_column($locationBreakdown, 'worked_days'));
+
+        // --- Deductions ---
+        $deductionsList    = [];
+        $deductionsDetails = $data['step_4']['deductions'] ?? [];
+        foreach ($deductionsDetails as $ded) {
+            $name = $ded['type'] ?? $ded['name'] ?? $ded['component_name'] ?? 'Unknown';
+            $deductionsList[$name] = ($deductionsList[$name] ?? 0) + ($ded['amount'] ?? 0);
+        }
+
+        $totalDeductions = $data['step_6']['total_deductions'] ?? array_sum($deductionsList);
+    @endphp
+    @php
+        $maskedAccount = !empty($accountNo)
+            ? substr($accountNo, 0, 4) .
+            str_repeat('X', max(0, strlen($accountNo) - 6)) .
+            substr($accountNo, -2)
+            : '-';
+
+        $maskedIfsc = !empty($ifsc)
+            ? substr($ifsc, 0, 4) .
+            str_repeat('X', max(0, strlen($ifsc) - 4))
+            : '-';
     @endphp
 
-    <table class="meta">
+    <!-- Header -->
+    <table class="brand-bar">
         <tr>
-            <td><strong>Employee:</strong>
-                {{ trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? '')) ?: ('ID: ' . $payroll->user_id) }}
+            <td>
+                <div class="company-name">Probim LLC</div>
+                <div class="company-sub">Payroll &amp; HR Services</div>
             </td>
-            <td><strong>Period:</strong> {{ $payroll->pay_period_month }} / {{ $payroll->pay_period_year }}</td>
-        </tr>
-        <tr>
-            <td><strong>Currency:</strong> {{ $currency }}</td>
-            <td><strong>Status:</strong> {{ ucfirst($payroll->status) }}</td>
+            <td>
+                <div class="payslip-tag">PAYSLIP</div>
+                <div class="payslip-ref">Payment ID: #{{ $paymentId }}</div>
+            </td>
         </tr>
     </table>
 
-    @if($convFrom && $convRate && $convFrom !== $currency)
-        <p class="conversion-note">
-            * All amounts converted from {{ $convFrom }} to {{ $currency }} at a rate of 1 {{ $convFrom }} = {{ $convRate }} {{ $currency }}.
-        </p>
-    @endif
-
-    {{-- Earnings --}}
-    <div class="section-title">Earnings</div>
-    <table class="table">
+    <!-- Stats strip -->
+    <table class="stats-strip">
         <tr>
-            <th>Description</th>
-            <th>Amount ({{ $currency }})</th>
+            <td>
+                <div class="stat-label">Pay Period</div>
+                <div class="stat-value">{{ $monthName }} {{ $yearFull }}</div>
+            </td>
+            <td>
+                <div class="stat-label">Payment Date</div>
+                <div class="stat-value">{{ $paymentDate }}</div>
+            </td>
+            <td>
+                <div class="stat-label">Worked Days</div>
+                <div class="stat-value">{{ $totalWorkedDays }} / {{ $daysInMonth }}</div>
+            </td>
+            <td>
+                <div class="stat-label">Net Pay</div>
+                <div class="stat-value highlight">{{ $currency }} {{ number_format($payroll->net_pay, 2) }}</div>
+            </td>
         </tr>
-        <tr>
-            <td>Gross Earnings</td>
-            <td>{{ number_format($step6['gross_earnings'] ?? 0, 2) }}</td>
-        </tr>
-        @if(isset($step3['overtime_amount']) && $step3['overtime_amount'] > 0)
-        <tr>
-            <td>Overtime</td>
-            <td>{{ number_format($step3['overtime_amount'], 2) }}</td>
-        </tr>
-        @endif
     </table>
 
-    {{-- Deductions --}}
-    @if(!empty($step4))
-    <div class="section-title">Deductions</div>
-    <table class="table">
+    <!-- Employee + Bank details -->
+    <table class="details-grid">
         <tr>
-            <th>Description</th>
-            <th>Amount ({{ $currency }})</th>
-            @if(isset(array_values($step4)[0]['statutory'])) <th>Statutory</th> @endif
+            <td>
+                <div class="detail-card">
+                    <h4>Employee Details</h4>
+                    <div class="detail-row"><span class="label">Name:</span> <span class="value">{{ $empName }}</span></div>
+                    <div class="detail-row"><span class="label">EID:</span> <span class="value">{{ $eid }}</span></div>
+                    <div class="detail-row"><span class="label">Designation:</span> <span class="value">{{ $designation }}</span></div>
+                    <div class="detail-row"><span class="label">Date of Joining:</span> <span class="value">{{ $doj }}</span></div>
+                </div>
+            </td>
+            <td>
+                <div class="detail-card">
+                    <h4>Bank Details</h4>
+                    <div class="detail-row"><span class="label">Account #:</span> <span class="value">{{ $maskedAccount }}</span></div>
+                    <div class="detail-row"><span class="label">Bank:</span> <span class="value">{{ $bankName }}</span></div>
+                    <div class="detail-row"><span class="label">IFSC / SWIFT:</span> <span class="value">{{ $maskedIfsc }}</span></div>
+                    <div class="detail-row"><span class="label">Branch:</span> <span class="value">{{ $branch }}</span></div>
+                </div>
+            </td>
         </tr>
-        @if(isset($step4['deductions']) && is_array($step4['deductions']))
-            @foreach($step4['deductions'] as $ded)
-            <tr>
-                <td>{{ $ded['name'] ?? $ded['component_name'] ?? 'Deduction' }}</td>
-                <td>{{ number_format($ded['amount'] ?? 0, 2) }}</td>
-                @if(isset($ded['statutory']))<td>{{ $ded['statutory'] ? 'Yes' : 'No' }}</td>@endif
-            </tr>
-            @endforeach
-        @else
-            @foreach($step4 as $key => $item)
-                @if(is_array($item) && isset($item['amount']))
+    </table>
+
+    <!-- Earnings Packages -->
+    @foreach($packagesEarnings as $pkg)
+        <div class="section-title earnings">Earnings: {{ $pkg['name'] }} Package ({{ $pkg['worked_days'] }} Days)</div>
+        <table class="line-table">
+            @foreach($pkg['components'] as $name => $amount)
                 <tr>
-                    <td>{{ $item['name'] ?? $item['component_name'] ?? ucwords(str_replace('_', ' ', $key)) }}</td>
-                    <td>{{ number_format($item['amount'], 2) }}</td>
-                    @if(isset($item['statutory']))<td>{{ $item['statutory'] ? 'Yes' : 'No' }}</td>@endif
+                    <td>{{ $name }}</td>
+                    <td class="amt">{{ $pkg['currency'] }} {{ number_format($amount, 2) }}</td>
                 </tr>
-                @endif
             @endforeach
+            @if(count($pkg['components']) === 0)
+                <tr><td colspan="2" style="color:#94a3b8;">No earnings recorded in this package.</td></tr>
+            @endif
+            <tr class="subtotal">
+                <td>Subtotal for {{ $pkg['name'] }} Package</td>
+                <td class="amt">{{ $pkg['currency'] }} {{ number_format($pkg['subtotal'], 2) }}</td>
+            </tr>
+        </table>
+    @endforeach
+
+    @if(count($packagesEarnings) === 0)
+        <div class="section-title earnings">Earnings</div>
+        <table class="line-table">
+            <tr><td colspan="2" style="color:#94a3b8;">No earnings packages recorded.</td></tr>
+        </table>
+    @endif
+
+    @if($deductionsList)
+    <!-- Deductions -->
+    @if(count($deductionsList) > 0 || $totalDeductions > 0)
+    <div class="section-title deductions">Global Deductions</div>
+    <table class="line-table">
+        @foreach($deductionsList as $name => $amount)
+            <tr>
+                <td>{{ $name }}</td>
+                <td class="amt">{{ $currency }} {{ number_format($amount, 2) }}</td>
+            </tr>
+        @endforeach
+        @if(count($deductionsList) === 0)
+            <tr><td colspan="2" style="color:#94a3b8;">No deductions applied.</td></tr>
         @endif
-        <tr>
-            <td><strong>Total Deductions</strong></td>
-            <td><strong>{{ number_format($step6['total_deductions'] ?? 0, 2) }}</strong></td>
-            @if(isset(array_values($step4)[0]['statutory'])) <td></td> @endif
+        <tr class="subtotal">
+            <td>Total Deductions (Converted)</td>
+            <td class="amt">{{ $currency }} {{ number_format($totalDeductions, 2) }}</td>
         </tr>
     </table>
     @endif
+    @endif
 
-    {{-- Net Pay Summary --}}
-    <table class="table">
-        <tr class="total">
-            <th>Final Net Pay</th>
-            <td>{{ $currency }} {{ number_format($step6['final_net_pay'] ?? 0, 2) }}</td>
+    <!-- Net pay bar -->
+    <table class="net-bar">
+        <tr>
+            <td class="net-label">Final Net Pay</td>
+            <td class="net-value">{{ $currency }} {{ number_format($payroll->net_pay, 2) }}</td>
         </tr>
     </table>
+
+    <div class="footer-note">
+        This is a system generated payslip and does not require a signature.
+    </div>
 
 </body>
 </html>

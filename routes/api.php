@@ -254,11 +254,15 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::post('calculate', [PayrollController::class, 'calculateMonthlySalary']);
         Route::post('overtime', [PayrollController::class, 'calculateOvertime']);
         Route::post('summary', [PayrollController::class, 'calculateTotals']);
+        Route::get('stats', [PayrollController::class, 'stats']);
         Route::get('/', [PayrollController::class, 'index']);
         Route::get('history', [PayrollController::class, 'history']);
         Route::get('draft/{employee_id}', [PayrollController::class, 'getDraft']);
         Route::post('save-step', [PayrollController::class, 'saveStep']);
         Route::post('submit', [PayrollController::class, 'submitPayroll']);
+        Route::post('convert-salary', [PayrollController::class, 'convertSalary']);
+        Route::post('{id}/send-payslip', [PayrollController::class, 'sendPayslip']);
+        Route::get('{id}/download', [PayrollController::class, 'downloadPayslip']);
         Route::get('{id}', [PayrollController::class, 'show']);
         Route::put('{id}', [PayrollController::class, 'update']);
         Route::delete('{id}', [PayrollController::class, 'destroy']);

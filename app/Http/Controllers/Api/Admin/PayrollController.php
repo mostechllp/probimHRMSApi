@@ -38,7 +38,74 @@ class PayrollController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => $payrolls,
+            'data' => $payrolls,
+        ]);
+    }
+
+    /**
+     * Get stats for payrolls: total generated, total amount, total paid, and pending payrolls.
+     */
+    public function stats(Request $request): JsonResponse
+    {
+        $query = Payroll::query();
+
+        if ($request->has('pay_period_month')) {
+            $query->where('pay_period_month', (int) $request->query('pay_period_month'));
+        }
+        if ($request->has('pay_period_year')) {
+            $query->where('pay_period_year', (int) $request->query('pay_period_year'));
+        }
+        if ($request->has('employee_id')) {
+            $query->where('employee_id', $request->query('employee_id'));
+        }
+
+        $payrolls = $query->get()->map(fn($payroll) => $this->formatPayroll($payroll));
+
+        $totalGenerated = 0;
+        $totalPending = 0;
+        $amountsByCurrency = [];
+
+        foreach ($payrolls as $payroll) {
+            $status = strtolower($payroll['status'] ?? '');
+            $currency = strtoupper($payroll['currency'] ?? 'AED');
+
+            if (!isset($amountsByCurrency[$currency])) {
+                $amountsByCurrency[$currency] = [
+                    'total_amount' => 0,
+                    'total_paid' => 0,
+                ];
+            }
+
+            if (in_array($status, ['draft', 'pending'])) {
+                $totalPending++;
+            }
+
+            // Generated / Completed includes everything that is finalized
+            if (in_array($status, ['completed', 'generated', 'paid'])) {
+                $totalGenerated++;
+                $netPay = (float) ($payroll['net_pay'] ?? 0);
+                
+                $amountsByCurrency[$currency]['total_amount'] += $netPay;
+
+                if ($status === 'paid' || $status === 'completed') {
+                    $amountsByCurrency[$currency]['total_paid'] += $netPay;
+                }
+            }
+        }
+
+        // Round amounts
+        foreach ($amountsByCurrency as $curr => $amounts) {
+            $amountsByCurrency[$curr]['total_amount'] = round($amounts['total_amount'], 2);
+            $amountsByCurrency[$curr]['total_paid'] = round($amounts['total_paid'], 2);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'total_generated' => $totalGenerated,
+                'total_pending' => $totalPending,
+                'amounts_by_currency' => $amountsByCurrency,
+            ]
         ]);
     }
 
@@ -50,11 +117,11 @@ class PayrollController extends Controller
     {
         $request->validate([
             'employee_id' => 'required|exists:users,id',
-            'month'       => 'required|date_format:Y-m',
+            'month' => 'required|date_format:Y-m',
         ]);
 
         $employeeId = $request->employee_id;
-        $month      = $request->month;
+        $month = $request->month;
 
         $employee = Employee::with([
             'salaryPackages' => function ($query) {
@@ -73,11 +140,11 @@ class PayrollController extends Controller
 
         // Differentiate Dubai (AED) package from Home package
         $dubaiPackage = $packages->firstWhere('currency', 'AED') ?? $packages->first();
-        $homePackage  = $packages->firstWhere('currency', '!=', 'AED') ?? $dubaiPackage;
+        $homePackage = $packages->firstWhere('currency', '!=', 'AED') ?? $dubaiPackage;
 
         // Fetch Attendance Logs for the month
         $startDate = Carbon::createFromFormat('Y-m', $month)->startOfMonth()->toDateString();
-        $endDate   = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->toDateString();
+        $endDate = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->toDateString();
 
         $attendanceLogs = AttendanceLog::where('userid', $employee->user_id) // AttendanceLog uses the string employee_id
             ->whereBetween('log_date', [$startDate, $endDate])
@@ -89,14 +156,20 @@ class PayrollController extends Controller
         }
 
         $groupedByLocation = $attendanceLogs->groupBy('work_location');
-        $totalWorkedDays   = $attendanceLogs->count();
+        $totalWorkedDays = $attendanceLogs->count();
+        // Get working days for the payroll month
+        $workingDays = Carbon::createFromFormat('Y-m', $month)
+            ->startOfMonth()
+            ->diffInWeekdays(
+                Carbon::createFromFormat('Y-m', $month)->endOfMonth()
+            ) + 1;
 
         $locationBreakdown = [];
-        $totalEarnings     = 0;
+        $totalEarnings = 0;
 
         foreach ($groupedByLocation as $locationName => $logs) {
             $locationName = $locationName ?: 'Unknown';
-            $workedDays   = $logs->count();
+            $workedDays = $logs->count();
 
             // Determine if location is Dubai-related
             $isDubaiLocation = false;
@@ -110,59 +183,63 @@ class PayrollController extends Controller
             }
 
             $selectedPackage = $isDubaiLocation ? $dubaiPackage : $homePackage;
-            $ratio = $workedDays / $totalWorkedDays;
+            // $ratio = $workedDays / $workingDays;
 
             $componentsData = [];
-            $subtotal       = 0;
+            $subtotal = 0;
 
             foreach ($selectedPackage->salaryComponents as $component) {
-                $proratedAmount = round($component->value * $ratio, 2);
+                // Daily amount of this salary component
+                $dailyAmount = $component->value / $workingDays;
+
+                // Salary earned for this work location
+                $amount = round($dailyAmount * $workedDays, 2);
                 $componentsData[] = [
-                    'id'     => $component->id,
-                    'name'   => $component->component_name,
-                    'amount' => $proratedAmount,
+                    'id' => $component->id,
+                    'name' => $component->component_name,
+                    'amount' => $amount,
                 ];
-                $subtotal += $proratedAmount;
+                $subtotal += $amount;
             }
 
             $packageDetails = $selectedPackage->toArray();
             unset($packageDetails['salary_components']);
 
             $locationBreakdown[] = [
-                'location_name'     => $locationName,
-                'package'           => $packageDetails,
-                'worked_days'       => $workedDays,
-                'currency'          => [
-                    'code'   => $selectedPackage->currency,
+                'location_name' => $locationName,
+                'package' => $packageDetails,
+                'worked_days' => $workedDays,
+                'currency' => [
+                    'code' => $selectedPackage->currency,
                     'symbol' => $selectedPackage->currency,
                 ],
                 'salary_components' => $componentsData,
-                'subtotal'          => round($subtotal, 2),
+                'subtotal' => round($subtotal, 2),
             ];
 
             $totalEarnings += $subtotal;
         }
 
         // Note: Deductions are handled manually per user request, so total_deductions = 0
-        $totalEarnings    = round($totalEarnings, 2);
-        $totalDeductions  = 0;
-        $grossSalary      = $totalEarnings;
-        $netSalary        = $totalEarnings - $totalDeductions;
+        $totalEarnings = round($totalEarnings, 2);
+        $totalDeductions = 0;
+        $grossSalary = $totalEarnings;
+        $netSalary = $totalEarnings - $totalDeductions;
 
         $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
 
         return response()->json([
             'success' => true,
             'data' => [
-                'employee_id'        => $employee->id,
-                'employee_name'      => $employeeName ?: null,
-                'month'              => $month,
-                'total_worked_days'  => $totalWorkedDays,
+                'employee_id' => $employee->id,
+                'employee_name' => $employeeName ?: null,
+                'month' => $month,
+                'total_worked_days' => $totalWorkedDays,
                 'location_breakdown' => $locationBreakdown,
-                'total_earnings'     => $totalEarnings,
-                'total_deductions'   => $totalDeductions,
-                'gross_salary'       => $grossSalary,
-                'net_salary'         => $netSalary,
+                'total_earnings' => $totalEarnings,
+                'total_deductions' => $totalDeductions,
+                'gross_salary' => $grossSalary,
+                'net_salary' => $netSalary,
             ]
         ]);
     }
@@ -174,11 +251,11 @@ class PayrollController extends Controller
     {
         $request->validate([
             'employee_id' => 'required|exists:users,id',
-            'month'       => 'required|date_format:Y-m',
+            'month' => 'required|date_format:Y-m',
         ]);
 
         $employeeId = $request->employee_id;
-        $month      = $request->month;
+        $month = $request->month;
 
         $employee = Employee::where('user_id', $employeeId)->first();
 
@@ -188,7 +265,7 @@ class PayrollController extends Controller
 
         // Fetch Attendance Logs for the month to get the working dates
         $startDate = Carbon::createFromFormat('Y-m', $month)->startOfMonth()->toDateString();
-        $endDate   = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->toDateString();
+        $endDate = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->toDateString();
 
         $attendanceLogs = AttendanceLog::where('userid', $employee->user_id)
             ->whereBetween('log_date', [$startDate, $endDate])
@@ -212,7 +289,7 @@ class PayrollController extends Controller
             $requiredMinutes = 0;
             if ($workingHour && $workingHour->is_enabled) {
                 $start = Carbon::createFromTimeString($workingHour->start_time);
-                $end   = Carbon::createFromTimeString($workingHour->end_time);
+                $end = Carbon::createFromTimeString($workingHour->end_time);
                 $requiredMinutes = $start->diffInMinutes($end);
             }
 
@@ -223,25 +300,25 @@ class PayrollController extends Controller
 
             $projects = $logsForDate->map(function ($log) {
                 return [
-                    'project_name'       => $log->project ? $log->project->name : 'Unknown',
-                    'time_taken_hours'   => round($log->time_taken_minutes / 60, 2),
+                    'project_name' => $log->project ? $log->project->name : 'Unknown',
+                    'time_taken_hours' => round($log->time_taken_minutes / 60, 2),
                     'time_taken_minutes' => $log->time_taken_minutes,
                 ];
             })->values()->toArray();
 
             $overtimeDetails[] = [
-                'date'                   => $date,
-                'day'                    => $dayOfWeek,
+                'date' => $date,
+                'day' => $dayOfWeek,
                 'required_working_hours' => round($requiredMinutes / 60, 2),
-                'total_logged_hours'     => round($totalProjectMinutes / 60, 2),
-                'overtime_hours'         => round($overtimeMinutes / 60, 2),
-                'projects'               => $projects,
+                'total_logged_hours' => round($totalProjectMinutes / 60, 2),
+                'overtime_hours' => round($overtimeMinutes / 60, 2),
+                'projects' => $projects,
             ];
         }
 
         return response()->json([
             'success' => true,
-            'data'    => $overtimeDetails,
+            'data' => $overtimeDetails,
         ]);
     }
 
@@ -251,9 +328,9 @@ class PayrollController extends Controller
     public function calculateTotals(Request $request): JsonResponse
     {
         $request->validate([
-            'user_id'          => 'required|exists:users,id',
+            'user_id' => 'required|exists:users,id',
             'pay_period_month' => 'required|integer|min:1|max:12',
-            'pay_period_year'  => 'required|integer|min:2000|max:2100',
+            'pay_period_year' => 'required|integer|min:2000|max:2100',
         ]);
 
         $employee = Employee::where('user_id', $request->user_id)->first();
@@ -287,13 +364,13 @@ class PayrollController extends Controller
         if (isset($data['step_3']['overtime_details']) && is_array($data['step_3']['overtime_details'])) {
             foreach ($data['step_3']['overtime_details'] as $ot) {
                 if (isset($ot['status']) && strtolower($ot['status']) === 'approved' && isset($ot['amount'])) {
-                    $overtimeAmount += (float)$ot['amount'];
+                    $overtimeAmount += (float) $ot['amount'];
                 }
             }
         } elseif (isset($data['step_3']['days']) && is_array($data['step_3']['days'])) {
             foreach ($data['step_3']['days'] as $day) {
                 if (isset($day['status']) && strtolower($day['status']) === 'approved' && isset($day['amount'])) {
-                    $overtimeAmount += (float)$day['amount'];
+                    $overtimeAmount += (float) $day['amount'];
                 }
             }
         } else {
@@ -318,7 +395,7 @@ class PayrollController extends Controller
             if (isset($data['step_4']) && is_array($data['step_4'])) {
                 foreach ($data['step_4'] as $key => $value) {
                     if (is_array($value) && isset($value['amount'])) {
-                        $totalDeductions += (float)$value['amount'];
+                        $totalDeductions += (float) $value['amount'];
                     }
                 }
             }
@@ -329,11 +406,11 @@ class PayrollController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => [
-                'gross_salary'    => round($grossSalary, 2),
+            'data' => [
+                'gross_salary' => round($grossSalary, 2),
                 'overtime_amount' => round($overtimeAmount, 2),
-                'deductions'      => round($totalDeductions, 2),
-                'net_pay'         => round($netPay, 2),
+                'deductions' => round($totalDeductions, 2),
+                'net_pay' => round($netPay, 2),
             ]
         ]);
     }
@@ -365,9 +442,9 @@ class PayrollController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'employee_id'  => $employee->id,
+                    'employee_id' => $employee->id,
                     'current_step' => 1,
-                    'data'         => []
+                    'data' => []
                 ]
             ]);
         }
@@ -386,18 +463,18 @@ class PayrollController extends Controller
     public function saveStep(Request $request): JsonResponse
     {
         $request->validate([
-            'user_id'          => 'required|exists:users,id',
-            'step'             => 'required|integer|min:1|max:6',
-            'step_data'        => 'required|array',
+            'user_id' => 'required|exists:users,id',
+            'step' => 'required|integer|min:1|max:6',
+            'step_data' => 'required|array',
         ]);
 
-        $user_id          = $request->user_id;
-        $step             = (int) $request->step;
-        $step_data        = $request->step_data;
-        
+        $user_id = $request->user_id;
+        $step = (int) $request->step;
+        $step_data = $request->step_data;
+
         // Attempt to get pay period month/year from step_data or request
         $pay_period_month = (int) ($request->step_data['pay_period_month'] ?? $request->pay_period_month ?? 0);
-        $pay_period_year  = (int) ($request->step_data['pay_period_year'] ?? $request->pay_period_year ?? 0);
+        $pay_period_year = (int) ($request->step_data['pay_period_year'] ?? $request->pay_period_year ?? 0);
 
         if (!$pay_period_month || !$pay_period_year) {
             return response()->json(['success' => false, 'message' => 'pay_period_month and pay_period_year are required in step_data or request'], 422);
@@ -416,19 +493,19 @@ class PayrollController extends Controller
 
         if (!$payroll) {
             // No record yet for this employee/month/year — create a fresh one
-            $payroll                   = new Payroll();
-            $payroll->user_id          = $employee->user_id;
+            $payroll = new Payroll();
+            $payroll->user_id = $employee->user_id;
             $payroll->pay_period_month = $pay_period_month;
-            $payroll->pay_period_year  = $pay_period_year;
-            $payroll->status           = 'draft';
-            $payroll->current_step     = 1;
-            $payroll->data             = [];
+            $payroll->pay_period_year = $pay_period_year;
+            $payroll->status = 'draft';
+            $payroll->current_step = 1;
+            $payroll->data = [];
         }
 
         // Merge the incoming step data into the existing JSON blob
-        $currentData                = $payroll->data ?? [];
+        $currentData = $payroll->data ?? [];
         $currentData["step_{$step}"] = $step_data;
-        $payroll->data              = $currentData;
+        $payroll->data = $currentData;
 
         // Advance current_step pointer if moving forward
         if ($step >= ($payroll->current_step ?? 1)) {
@@ -445,7 +522,7 @@ class PayrollController extends Controller
         return response()->json([
             'success' => true,
             'message' => "Step {$step} saved successfully",
-            'data'    => $payroll,
+            'data' => $payroll,
         ]);
     }
 
@@ -455,11 +532,14 @@ class PayrollController extends Controller
     public function submitPayroll(Request $request): JsonResponse
     {
         $request->validate([
-            'user_id'          => 'required|exists:users,id',
+            'user_id' => 'required|exists:users,id',
             'pay_period_month' => 'required|integer|min:1|max:12',
-            'pay_period_year'  => 'required|integer|min:2000|max:2100',
-            'target_currency'  => 'sometimes|string|in:AED,INR,USD,EUR,GBP,PHP,LKR',
-            'conversion_rates' => 'sometimes|array',
+            'pay_period_year' => 'required|integer|min:2000|max:2100',
+            'gross_salary' => 'required|numeric',
+            'overtime' => 'required|numeric',
+            'deductions' => 'required|numeric',
+            'net_pay' => 'required|numeric',
+            'currency' => 'required|string',
         ]);
 
         $user_id = $request->user_id;
@@ -478,55 +558,17 @@ class PayrollController extends Controller
             return response()->json(['success' => false, 'message' => 'No payroll found for this employee and period'], 404);
         }
 
-        // Currency Conversion
-        $targetCurrency = $request->input('target_currency');
-        $data = $payroll->data ?? [];
 
-        if ($targetCurrency) {
-            // Default hardcoded conversion rates relative to AED.
-            // The caller can override these by passing a 'conversion_rates' map (e.g. { "INR": 22.5 })
-            $defaultRates = [
-                'AED' => 1.00,
-                'INR' => 22.51,
-                'USD' => 0.27,
-                'EUR' => 0.25,
-                'GBP' => 0.21,
-                'PHP' => 15.74,
-                'LKR' => 86.50,
-            ];
-
-            $rates = array_merge($defaultRates, $request->input('conversion_rates', []));
-            $rate  = $rates[$targetCurrency] ?? 1.0;
-
-            // Helper closure to recursively convert any numeric field that looks like a money value
-            $moneyKeys = [
-                'gross_earnings', 'gross_salary', 'total_earnings', 'total_deductions',
-                'final_net_pay', 'net_pay', 'net_salary', 'overtime_amount', 'amount',
-                'subtotal', 'value',
-            ];
-
-            $convertData = function (&$arr) use (&$convertData, $rate, $moneyKeys) {
-                if (!is_array($arr)) {
-                    return;
-                }
-                foreach ($arr as $key => &$val) {
-                    if (is_numeric($val) && in_array($key, $moneyKeys, true)) {
-                        $val = round((float) $val * $rate, 2);
-                    } elseif (is_array($val)) {
-                        $convertData($val);
-                    }
-                }
-            };
-
-            $convertData($data);
-
-            $data['currency']            = $targetCurrency;
-            $data['conversion_rate']     = $rate;
-            $data['conversion_from']     = 'AED';
-            $payroll->data               = $data;
+        if ($payroll->status === 'completed') {
+            return response()->json(['success' => false, 'message' => 'Payroll already submitted for this employee and period'], 400);
         }
 
         // Mark as completed
+        $payroll->gross_salary = $request->gross_salary ?? null;
+        $payroll->net_pay = $request->net_pay ?? null;
+        $payroll->deductions = $request->deductions ?? null;
+        $payroll->overtime = $request->overtime ?? null;
+        $payroll->currency = $request->currency ?? null;
         $payroll->status = 'completed';
         $payroll->save();
 
@@ -536,7 +578,13 @@ class PayrollController extends Controller
 
             if (view()->exists('pdf.payslip')) {
                 $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll]);
-                // $pdf->save(storage_path('app/public/payslips/' . $payroll->id . '.pdf'));
+
+                $path = storage_path('app/public/payslips');
+                if (!file_exists($path)) {
+                    mkdir($path, 0775, true);
+                }
+
+                $pdf->save($path . '/' . $payroll->id . '.pdf');
             }
         } catch (\Exception $e) {
             \Log::error("Failed to generate PDF for payroll {$payroll->id}: " . $e->getMessage());
@@ -545,8 +593,201 @@ class PayrollController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Payroll generated and submitted successfully',
-            'data'    => $payroll,
+            'data' => $payroll,
         ]);
+    }
+
+    /**
+     * Calculate converted salary totals based on multiple currencies from different steps.
+     */
+    public function convertSalary(Request $request): JsonResponse
+    {
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'pay_period_month' => 'required|integer|min:1|max:12',
+            'pay_period_year' => 'required|integer|min:2000|max:2100',
+            'target_currency' => 'required|string',
+            'conversion_rates' => 'sometimes|array',
+        ]);
+
+        $employee = Employee::where('user_id', $request->user_id)->first();
+        if (!$employee) {
+            return response()->json(['success' => false, 'message' => 'Employee not found'], 404);
+        }
+
+        $payroll = Payroll::where('user_id', $employee->user_id)
+            ->where('pay_period_month', $request->pay_period_month)
+            ->where('pay_period_year', $request->pay_period_year)
+            ->first();
+
+        if (!$payroll) {
+            return response()->json(['success' => false, 'message' => 'Payroll record not found'], 404);
+        }
+
+        $data = $payroll->data ?? [];
+        $targetCurrency = $request->target_currency;
+        $customRates = $request->input('conversion_rates', []);
+
+        $ratesMap = [];
+        foreach ($customRates as $rate) {
+            if (isset($rate['from_currency']) && isset($rate['rate'])) {
+                $ratesMap[$rate['from_currency']] = (float) $rate['rate'];
+            }
+        }
+
+        $getRate = function ($fromCurrency) use ($targetCurrency, $ratesMap) {
+            if ($fromCurrency === $targetCurrency)
+                return 1.0;
+            if (isset($ratesMap[$fromCurrency])) {
+                return $ratesMap[$fromCurrency];
+            }
+
+            // Fallback default rates (assuming AED base to other currencies if fromCurrency is AED)
+            // If fromCurrency is AED, we use the default rate to targetCurrency
+            $aedToX = [
+                'AED' => 1.00,
+                'INR' => 22.51,
+                'USD' => 0.27,
+                'EUR' => 0.25,
+                'GBP' => 0.21,
+                'PHP' => 15.74,
+                'LKR' => 86.50,
+            ];
+
+            if ($fromCurrency === 'AED' && isset($aedToX[$targetCurrency])) {
+                return $aedToX[$targetCurrency];
+            }
+
+            // If we're converting from e.g. INR to AED, and no rate provided, 
+            // fallback could be inverse of AED->INR
+            if ($targetCurrency === 'AED' && isset($aedToX[$fromCurrency])) {
+                return 1.0 / $aedToX[$fromCurrency];
+            }
+
+            return 1.0;
+        };
+
+        $convertedGross = 0;
+        // Check step_2 first, fallback to step_1
+        $locationBreakdown = $data['step_2']['location_breakdown'] ?? $data['step_1']['location_breakdown'] ?? [];
+        foreach ($locationBreakdown as $loc) {
+            $subtotal = $loc['subtotal'] ?? 0;
+            $currency = $loc['currency']['code'] ?? 'AED';
+            $rate = $getRate($currency);
+            $convertedGross += ($subtotal * $rate);
+        }
+
+        $convertedOvertime = 0;
+        $overtimeDetails = $data['step_3']['overtime_details'] ?? $data['step_3']['days'] ?? [];
+        foreach ($overtimeDetails as $ot) {
+            $amount = $ot['amount'] ?? 0;
+            $currency = $ot['currency'] ?? 'AED';
+            $rate = $getRate($currency);
+            $convertedOvertime += ($amount * $rate);
+        }
+
+        $convertedDeductions = 0;
+        $deductionsDetails = $data['step_4']['deductions'] ?? [];
+        foreach ($deductionsDetails as $deduction) {
+            if (strtolower($deduction['is_statutory']) === 'yes') {
+                $amount = $deduction['amount'] ?? 0;
+                $currency = $deduction['currency'] ?? 'AED';
+                $rate = $getRate($currency);
+                $convertedDeductions += ($amount * $rate);
+            }
+        }
+
+        $convertedNetPay = $convertedGross + $convertedOvertime - $convertedDeductions;
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'target_currency' => $targetCurrency,
+                'converted_gross_salary' => round($convertedGross, 2),
+                'converted_overtime' => round($convertedOvertime, 2),
+                'converted_deductions' => round($convertedDeductions, 2),
+                'converted_net_pay' => round($convertedNetPay, 2)
+            ]
+        ]);
+    }
+
+    /**
+     * Send payslip to employee via email
+     */
+    public function sendPayslip($id): JsonResponse
+    {
+        $payroll = Payroll::with('employee.user')->find($id);
+
+        if (!$payroll) {
+            return response()->json(['success' => false, 'message' => 'Payroll record not found'], 404);
+        }
+
+        if ($payroll->status !== 'completed') {
+            return response()->json(['success' => false, 'message' => 'Cannot send payslip for incomplete payroll'], 400);
+        }
+
+        $employee = $payroll->employee;
+        $user = $employee->user;
+
+        if (!$user || !$user->email) {
+            return response()->json(['success' => false, 'message' => 'Employee email not found'], 404);
+        }
+
+        try {
+            if (!view()->exists('pdf.payslip')) {
+                return response()->json(['success' => false, 'message' => 'Payslip template not found'], 500);
+            }
+
+            $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll]);
+            $pdfContent = $pdf->output();
+
+            \Illuminate\Support\Facades\Mail::to($user->email)->send(new \App\Mail\PayslipMail($payroll, $pdfContent));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Payslip sent successfully to ' . $user->email,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error("Failed to send payslip for payroll {$payroll->id}: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to send payslip: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Download the payslip PDF on the fly
+     */
+    public function downloadPayslip($id)
+    {
+        $payroll = Payroll::with(['employee.user.designation', 'employee.bankDetails'])->find($id);
+
+        if (!$payroll) {
+            return response()->json(['success' => false, 'message' => 'Payroll record not found'], 404);
+        }
+
+        if ($payroll->status !== 'completed') {
+            return response()->json(['success' => false, 'message' => 'Cannot download payslip for incomplete payroll'], 400);
+        }
+
+        try {
+            if (!view()->exists('pdf.payslip')) {
+                return response()->json(['success' => false, 'message' => 'Payslip template not found'], 500);
+            }
+
+            $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll]);
+            $monthName = Carbon::createFromFormat('m', $payroll->pay_period_month)->format('F');
+            $fileName = "Payslip_{$monthName}_{$payroll->pay_period_year}.pdf";
+
+            return $pdf->download($fileName);
+        } catch (\Exception $e) {
+            \Log::error("Failed to generate PDF for payroll {$payroll->id}: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to generate payslip: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -567,7 +808,7 @@ class PayrollController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => $payrolls,
+            'data' => $payrolls,
         ]);
     }
 
@@ -584,7 +825,7 @@ class PayrollController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => array_merge($this->formatPayroll($payroll), ['step_data' => $payroll->data]),
+            'data' => array_merge($this->formatPayroll($payroll), ['step_data' => $payroll->data]),
         ]);
     }
 
@@ -594,8 +835,8 @@ class PayrollController extends Controller
     public function update(Request $request, $id): JsonResponse
     {
         $request->validate([
-            'status'    => 'sometimes|in:draft,completed',
-            'step'      => 'sometimes|integer|min:1|max:6',
+            'status' => 'sometimes|in:draft,completed',
+            'step' => 'sometimes|integer|min:1|max:6',
             'step_data' => 'sometimes|array',
         ]);
 
@@ -607,7 +848,7 @@ class PayrollController extends Controller
 
         // Update step data if provided
         if ($request->has('step') && $request->has('step_data')) {
-            $step        = (int) $request->step;
+            $step = (int) $request->step;
             $currentData = $payroll->data ?? [];
             $currentData["step_{$step}"] = $request->step_data;
             $payroll->data = $currentData;
@@ -627,7 +868,7 @@ class PayrollController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Payroll updated successfully',
-            'data'    => array_merge($this->formatPayroll($payroll), ['step_data' => $payroll->data]),
+            'data' => array_merge($this->formatPayroll($payroll), ['step_data' => $payroll->data]),
         ]);
     }
 
@@ -719,7 +960,7 @@ class PayrollController extends Controller
         // ------------------------------------------------------------------
         // 3. Resolve employee name
         // ------------------------------------------------------------------
-        $employee     = $payroll->employee;
+        $employee = $payroll->employee;
         $employeeName = $employee
             ? trim($employee->first_name . ' ' . $employee->last_name)
             : null;
@@ -734,15 +975,19 @@ class PayrollController extends Controller
             : null;
 
         return [
-            'id'            => $payroll->id,
+            'id' => $payroll->id,
             'employee_name' => $employeeName,
-            'employee_id'   => $payroll->user_id,
-            'avatar'        => $avatarUrl,
-            'month'         => $payroll->pay_period_month,
-            'year'          => $payroll->pay_period_year,
-            'net_pay'       => $netPay,
-            'status'        => $payroll->status,
-            'payment_date'  => $paymentDate,
+            'employee_id' => $payroll->user_id,
+            'avatar' => $avatarUrl,
+            'month' => $payroll->pay_period_month,
+            'year' => $payroll->pay_period_year,
+            'net_pay' => $payroll->net_pay,
+            'gross_salary' => $payroll->gross_salary,
+            'currency' => $payroll->currency,
+            'overtime' => $payroll->overtime,
+            'deductions' => $payroll->deductions,
+            'status' => $payroll->status,
+            'payment_date' => $paymentDate,
         ];
     }
 }
