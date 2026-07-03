@@ -84,7 +84,7 @@ class PayrollController extends Controller
             if (in_array($status, ['completed', 'generated', 'paid'])) {
                 $totalGenerated++;
                 $netPay = (float) ($payroll['net_pay'] ?? 0);
-                
+
                 $amountsByCurrency[$currency]['total_amount'] += $netPay;
 
                 if ($status === 'paid' || $status === 'completed') {

@@ -7,6 +7,7 @@ use App\Models\AttendanceLog;
 use App\Models\ProjectTimeLog;
 use App\Models\AttendanceBreak;
 use App\Models\TaskReport;
+use App\Models\Employee;
 use App\Models\WfhRequest;
 use App\Models\LeaveRequest;
 use App\Models\LeaveType;
@@ -416,7 +417,7 @@ class EmployeePortalApiController extends ApiController
     public function leaves(): JsonResponse
     {
         $user = auth('api')->user();
-        $employee = $user ? $user : null;
+        $employee = Employee::where('user_id', $user->id)->first();
         if (!$employee)
             return $this->error('Employee profile not found', 404);
 
@@ -485,16 +486,19 @@ class EmployeePortalApiController extends ApiController
     public function storeLeave(Request $request): JsonResponse
     {
         $request->validate([
+            'employee_id' => 'required|exists:employees,id',
             'leave_type_id' => 'required|exists:leave_types,id',
             'start_date' => 'required|date|after_or_equal:today',
             'end_date' => 'required|date|after_or_equal:start_date',
             'reason' => 'required|string|min:10',
             'claim_salary' => 'nullable|boolean',
             'document' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:2048',
+            'session1' => 'nullable|in:morning,afternoon',  // session for start date
+            'session2' => 'nullable|in:morning,afternoon',  // session for end date
+            'year' => 'nullable|integer',
         ]);
 
-        $user = auth('api')->user();
-        $employee = $user ? $user : null;
+        $employee = Employee::find($request->employee_id);
         if (!$employee)
             return $this->error('Employee profile not found', 404);
 
@@ -505,13 +509,34 @@ class EmployeePortalApiController extends ApiController
             return $this->error('Medical certificate is required for sick leave', 422);
         }
 
-        // Duration calculation
+        // ── Duration calculation based on session1 / session2 ──────────────────
+        // session1 = session for start_date: 'morning' (from morning = full) | 'afternoon' (from afternoon = half)
+        // session2 = session for end_date:   'morning' (until morning = half) | 'afternoon' (until afternoon = full)
         $start = Carbon::parse($request->start_date);
         $end = Carbon::parse($request->end_date);
-        $durationDays = $start->diffInDays($end) + 1;
+        $session1 = $request->input('session1', 'morning');   // default: full start day
+        $session2 = $request->input('session2', 'afternoon'); // default: full end day
+
+        $startContrib = ($session1 === 'morning') ? 1.0 : 0.5;
+        $endContrib = ($session2 === 'afternoon') ? 1.0 : 0.5;
+
+        $totalDays = $start->diffInDays($end); // number of days between (exclusive end)
+
+        if ($totalDays === 0) {
+            // Single-day leave
+            if ($session1 === 'morning' && $session2 === 'afternoon') {
+                $durationDays = 1.0; // full day
+            } else {
+                $durationDays = 0.5; // half day (morning only or afternoon only)
+            }
+        } else {
+            // Multi-day leave: start contribution + middle full days + end contribution
+            $middleDays = $totalDays - 1; // days strictly between start and end
+            $durationDays = $startContrib + $middleDays + $endContrib;
+        }
 
         // Balance check
-        $currentYear = date('Y');
+        $currentYear = $request->input('year', date('Y'));
         $allocation = LeaveAllocation::where('employee_id', $employee->id)
             ->where('leave_type_id', $request->leave_type_id)
             ->where('year', $currentYear)
@@ -521,7 +546,7 @@ class EmployeePortalApiController extends ApiController
 
         $leavesTaken = LeaveRequest::where('employee_id', $employee->id)
             ->where('leave_type_id', $request->leave_type_id)
-            ->whereIn('status', ['approved', 'pending'])
+            ->where('status', 'approved')
             ->sum('duration_days');
 
         $remainingBalance = $allocated - $leavesTaken;
@@ -540,6 +565,8 @@ class EmployeePortalApiController extends ApiController
             'leave_type_id' => $request->leave_type_id,
             'start_date' => $request->start_date,
             'end_date' => $request->end_date,
+            'session1' => $request->input('session1', 'morning'),
+            'session2' => $request->input('session2', 'afternoon'),
             'duration_days' => $durationDays,
             'claim_salary' => $request->claim_salary ?? false,
             'document' => $documentPath,

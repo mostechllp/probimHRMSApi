@@ -143,6 +143,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::get('projects/eligible-managers', [ProjectApiController::class, 'getEligibleManagers']);
     Route::apiResource('projects', ProjectApiController::class);
     Route::get('project-assignments', [ProjectAssignmentApiController::class, 'index']);
+    Route::get('project-assignments/monthly-hours', [ProjectAssignmentApiController::class, 'monthlyProjectHours']);
     Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show']);
     Route::get('project-assignments/{id}/working-time', [ProjectAssignmentApiController::class, 'workingTime']);
     Route::post('employees/projects', [ProjectAssignmentApiController::class, 'assign']);
@@ -164,6 +165,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     // Leave Management (Admin side)
     Route::get('leaves', [LeaveApiController::class, 'index'])->middleware('permission:leaves.read');
     Route::get('leaves/{leaveRequest}', [LeaveApiController::class, 'show'])->middleware('permission:leaves.read');
+    Route::post('leaves', [LeaveApiController::class, 'store'])->middleware('permission:leaves.create');
     Route::post('leaves/{leaveRequest}/status', [LeaveApiController::class, 'updateStatus'])->middleware('permission:leaves.edit');
 
     // WFH Requests (Admin side)
@@ -281,6 +283,9 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::get('leaves', [EmployeePortalApiController::class, 'leaves']);
     Route::get('leave-balance', [EmployeePortalApiController::class, 'leaveTypesAndBalance']);
     Route::post('leaves', [EmployeePortalApiController::class, 'storeLeave']);
+    Route::get('leave-types', [LeaveTypeApiController::class, 'index']);
+    Route::get('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'show']);
+
 
     // Task Reports
     Route::get('task-reports', [EmployeePortalApiController::class, 'taskReports']);

@@ -11,6 +11,8 @@ class LeaveRequest extends Model
         'leave_type_id',
         'start_date',
         'end_date',
+        'session1',
+        'session2',
         'reason',
         'duration_days',
         'claim_salary',
@@ -19,6 +21,7 @@ class LeaveRequest extends Model
         'approved_by',
         'admin_remark',
     ];
+
 
     protected $casts = [
         'start_date' => 'date',

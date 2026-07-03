@@ -85,6 +85,7 @@ class UpdateEmployeeRequest extends FormRequest
         return [
             'first_name' => 'required|string|max:255',
             'last_name' => 'nullable|string|max:255',
+            'employee_id' => 'nullable|string|max:255',
             'organization_id' => 'nullable|exists:organizations,id',
             'designation_id' => 'required|exists:designations,id',
             'department_id' => 'required|exists:departments,id',
