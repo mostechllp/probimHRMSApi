@@ -16,12 +16,37 @@ class LeaveAllocationApiController extends ApiController
      */
     public function index(): JsonResponse
     {
-        $employees = Employee::with(['user.designation', 'user.department', 'user.company'])->get();
         $leaveTypes = LeaveType::where('status', true)->get();
+        
+        $employees = Employee::with(['user.designation', 'user.department', 'user.company', 'leaveAllocations' => function($q) {
+            $q->where('year', date('Y'));
+        }])->get();
+
+        $employeeData = $employees->map(function ($employee) use ($leaveTypes) {
+            $allocations = [];
+            foreach ($leaveTypes as $type) {
+                $allocation = $employee->leaveAllocations->firstWhere('leave_type_id', $type->id);
+                $allocations[] = [
+                    'leave_type_id' => $type->id,
+                    'leave_type_name' => $type->name,
+                    'allocated_days' => $allocation ? (int) $allocation->allocated_days : 0,
+                ];
+            }
+
+            return [
+                'employee_id' => $employee->id,
+                'name' => trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? '')),
+                'designation' => $employee->user->designation->name ?? 'N/A',
+                'department' => $employee->user->department->name ?? 'N/A',
+                'company' => $employee->user->company->name ?? 'N/A',
+                'avatar' => $employee->avatar_url ?? null,
+                'allocations' => $allocations,
+            ];
+        });
 
         return $this->success([
-            'employees' => $employees,
-            'leave_types' => $leaveTypes
+            'leave_types' => $leaveTypes,
+            'employees' => $employeeData
         ]);
     }
 

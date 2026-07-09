@@ -85,6 +85,7 @@ class UpdateEmployeeRequest extends FormRequest
         return [
             'first_name' => 'required|string|max:255',
             'last_name' => 'nullable|string|max:255',
+            'employee_id' => 'nullable|string|max:255',
             'organization_id' => 'nullable|exists:organizations,id',
             'designation_id' => 'required|exists:designations,id',
             'department_id' => 'required|exists:departments,id',
@@ -146,6 +147,7 @@ class UpdateEmployeeRequest extends FormRequest
             'company_mobile_number' => 'nullable|string|max:255',
             'personal_number' => 'nullable|string|max:255',
             'other_number' => 'nullable|string|max:255',
+            'relative_number' => 'nullable|string|max:255',
             'home_country_number' => 'nullable|string|max:255',
             'company_email' => [
             'nullable',

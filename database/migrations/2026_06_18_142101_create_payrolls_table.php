@@ -16,6 +16,11 @@ return new class extends Migration
             $table->unsignedBigInteger('employee_id');
             $table->integer('pay_period_month')->nullable();
             $table->integer('pay_period_year')->nullable();
+            $table->float('gross_salary')->nullable();
+            $table->float('overtime')->nullable();
+            $table->float('deductions')->nullable();
+            $table->float('net_pay')->nullable();
+            $table->string('currency')->nullable();
             $table->string('status')->default('draft'); // draft, completed
             $table->integer('current_step')->default(1);
             $table->json('data')->nullable(); // Stores all the wizard data

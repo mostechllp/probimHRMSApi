@@ -77,6 +77,7 @@ class Employee extends Model
         'company_mobile_number',
         'personal_number',
         'other_number',
+        'relative_number',
         'home_country_number',
         'company_email',
         'personal_email',
@@ -129,12 +130,9 @@ class Employee extends Model
         return $this->hasMany(LeaveAllocation::class);
     }
 
-    public function projects()
+    public function salaryPackages()
     {
-        return $this->belongsToMany(Project::class, 'employee_project')
-            ->withPivot('assigned_by', 'deleted_by', 'deleted_at')
-            ->withTimestamps()
-            ->wherePivot('deleted_at', null);
+        return $this->hasMany(EmployeeSalaryPackage::class);
     }
 
     public function salaryComponents()
@@ -145,5 +143,20 @@ class Employee extends Model
     public function bankDetails()
     {
         return $this->hasMany(EmployeeBankDetail::class);
+    }
+
+    public function projects()
+    {
+        return $this->belongsToMany(
+            Project::class,
+            'employee_project',
+            'employee_id',   // foreign key on pivot
+            'project_id', // related key on pivot
+            'user_id',   // local key on Employee model
+            'id'         // local key on Project model
+        )
+            ->withPivot('assigned_by', 'deleted_by', 'deleted_at')
+            ->withTimestamps()
+            ->wherePivotNull('deleted_at');
     }
 }

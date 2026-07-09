@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Notifications\DocumentExpiryNotification;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Log;
 
 class CheckDocumentExpiry extends Command
 {
@@ -74,22 +75,23 @@ class CheckDocumentExpiry extends Command
             $expiringEmployees = Employee::whereBetween($field, [$today, $thresholdDate])->get();
 
             foreach ($expiringEmployees as $employee) {
+                $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
                 $data = [
                     'type' => 'employee_document',
-                    'name' => "{$label} ({$employee->name})",
+                    'name' => "{$label} ({$employeeName})",
                     'expiry_date' => $employee->$field,
-                    'owner' => $employee->name,
-                    'message' => "The {$label} for employee '{$employee->name}' is expiring on {$employee->$field}."
+                    'owner' => $employeeName,
+                    'message' => "The {$label} for employee '{$employeeName}' is expiring on {$employee->$field}."
                 ];
 
                 Notification::send($adminUsers, new DocumentExpiryNotification($data));
                 $notifiedCount++;
 
-                Log::info("Employee doc notified: {$emp->name} - {$label}");
+                Log::info("Employee doc notified: {$employeeName} - {$label}");
             }
         }
 
         $this->info("Check complete. Sent {$notifiedCount} notifications.");
-        Log::info("Employee doc notified: {$emp->name} - {$label}");
+        Log::info("Check complete. Sent {$notifiedCount} notifications.");
     }
 }
