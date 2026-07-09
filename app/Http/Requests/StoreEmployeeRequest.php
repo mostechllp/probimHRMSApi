@@ -148,6 +148,7 @@ class StoreEmployeeRequest extends FormRequest
             'company_mobile_number' => 'nullable|string|max:255',
             'personal_number' => 'nullable|string|max:255',
             'other_number' => 'nullable|string|max:255',
+            'relative_number' => 'nullable|string|max:255',
             'home_country_number' => 'nullable|string|max:255',
             'company_email' => [
             'nullable',

@@ -319,6 +319,77 @@ class AttendanceApiController extends ApiController
         ]);
     }
 
+    public function stats(Request $request): JsonResponse
+    {
+        $today = Carbon::today()->toDateString();
+
+        // Get all active, non-admin employees
+        $employees = Employee::with('user')->whereHas('user', function ($query) {
+            $query->where('status', 'active')->where('type', '!=', 'admin');
+        })->get();
+
+        // Get today's attendance logs
+        $todayLogs = AttendanceLog::whereDate('log_date', $today)
+            ->select('userid', DB::raw('MIN(punch_in) as punch_in'), DB::raw('MAX(punch_out) as punch_out'))
+            ->groupBy('userid')
+            ->get()
+            ->keyBy('userid'); // assuming userid in AttendanceLog is employee_id (string) or user_id (int). Based on codebase, it's usually employee_id or user_id. Wait, AttendanceLog uses user_id or employee_id?
+            // In DashboardApiController: $todayLogs = AttendanceLog::whereDate('log_date', $today)... ->groupBy('userid')->get();
+            // Let's assume userid maps to user_id or employee_id. The previous code uses it.
+            // Let's key by userid to easily check.
+
+        $result = [
+            'total' => ['count' => 0, 'employees' => []],
+            'punched_in' => ['count' => 0, 'employees' => []],
+            'punched_out' => ['count' => 0, 'employees' => []],
+            'absent' => ['count' => 0, 'employees' => []],
+            'late' => ['count' => 0, 'employees' => []],
+        ];
+
+        foreach ($employees as $employee) {
+            // Need to know what 'userid' in AttendanceLog refers to.
+            // In Employee model, attendanceLogs() has 'userid' referencing 'employee_id'.
+            // In DashboardApiController: userid is used. Let's use both user_id and employee_id to be safe, or just employee_id based on the model relation.
+            // Actually, in DashboardApiController: $activeEmployees - $punchedInCount. So it just uses count.
+            // Let's check employee->employee_id or employee->user_id against log->userid.
+            $log = $todayLogs->get($employee->employee_id) ?? $todayLogs->get($employee->user_id);
+
+            $empData = [
+                'id' => $employee->id,
+                'employee_id' => $employee->employee_id,
+                'user_id' => $employee->user_id,
+                'name' => trim($employee->first_name . ' ' . $employee->last_name),
+                'email' => $employee->user ? $employee->user->email : null,
+            ];
+
+            $result['total']['count']++;
+            $result['total']['employees'][] = $empData;
+
+            if ($log && $log->punch_in) {
+                // Punched in
+                $result['punched_in']['count']++;
+                $result['punched_in']['employees'][] = $empData;
+
+                $punchInTime = Carbon::parse($log->punch_in)->format('H:i:s');
+                if ($punchInTime >= '08:11:00' && $punchInTime <= '12:00:00') {
+                    $result['late']['count']++;
+                    $result['late']['employees'][] = $empData;
+                }
+
+                if ($log->punch_out && Carbon::parse($log->punch_out)->format('H:i:s') >= '12:00:00') {
+                    $result['punched_out']['count']++;
+                    $result['punched_out']['employees'][] = $empData;
+                }
+            } else {
+                // Absent
+                $result['absent']['count']++;
+                $result['absent']['employees'][] = $empData;
+            }
+        }
+
+        return $this->success($result);
+    }
+
     /**
      * Upload Attendance File
      */
@@ -412,30 +483,81 @@ class AttendanceApiController extends ApiController
 
     /**
      * Get Late Comers
+     * Dynamically checks against the WorkingHour start_time per day.
      */
     public function lateComers(Request $request): JsonResponse
     {
-        $perPage = $request->get('per_page', 15);
+        $perPage  = (int) $request->get('per_page', 15);
+        $page     = (int) $request->get('page', 1);
         $datePreset = $request->get('date_preset', 'today');
 
-        $query = AttendanceLog::with(['company', 'user']);
-        $this->applyDateFilter($query, $datePreset, $request->get('from_date'), $request->get('to_date'));
+        // Load working hours keyed by lowercase day name
+        $workingHours = WorkingHour::all()->keyBy(fn($wh) => strtolower($wh->day));
 
-        $query->select(
-            'company_id',
-            'userid',
-            'log_date',
-            DB::raw("MIN(punch_in) as punch_in"),
-            DB::raw("MAX(punch_out) as punch_out")
-        )
-            ->groupBy('company_id', 'userid', 'log_date')
-            ->havingRaw("TIME(MIN(punch_in)) > '08:10:59' AND TIME(MIN(punch_in)) <= '12:00:00'");
+        // Build base attendance query
+        $query = AttendanceLog::with(['user.employee', 'user.department', 'user.designation'])
+            ->whereNotNull('punch_in')
+            ->select('company_id', 'userid', 'log_date', 'punch_in', 'punch_out')
+            ->orderBy('log_date', 'desc');
+
+        $this->applyDateFilter($query, $datePreset, $request->get('from_date'), $request->get('to_date'));
 
         if ($request->filled('company_id')) {
             $query->where('company_id', $request->company_id);
         }
 
-        return $this->success($query->paginate($perPage));
+        // Fetch all matching logs, then filter by dynamic per-day start_time
+        $allLogs = $query->get();
+
+        $lateComers = $allLogs->filter(function ($log) use ($workingHours) {
+            $dayName = strtolower(Carbon::parse($log->log_date)->format('l')); // e.g. 'monday'
+            $config  = $workingHours->get($dayName);
+
+            // Skip days that have no config or are disabled
+            if (!$config || !$config->is_enabled || !$config->start_time) {
+                return false;
+            }
+
+            $punchInTime  = Carbon::parse($log->punch_in)->format('H:i:s');
+            $configStart  = Carbon::createFromTimeString($config->start_time)->format('H:i:s');
+            $noonCutoff   = '12:00:00';
+
+            // Late = punched in after the configured start time but before noon
+            return $punchInTime > $configStart && $punchInTime <= $noonCutoff;
+        })->map(function ($log) {
+            $employee = $log->user?->employee ?? null;
+
+            return [
+                'id' => $employee->id,
+                'user_id' => $employee?->user_id ?? null,
+                'employee_id'  => $employee?->employee_id ?? null,
+                'name'         => $employee
+                    ? trim($employee->first_name . ' ' . $employee->last_name)
+                    : ($log->user?->name ?? 'Unknown'),
+                'department'   => $log->user?->department?->name ?? 'N/A',
+                'designation'  => $log->user?->designation?->name ?? 'N/A',
+                'company_id'   => $log->company_id,
+                'log_date'     => $log->log_date,
+                'punch_in'     => Carbon::parse($log->punch_in)->format('h:i A'),
+                'punch_out'    => $log->punch_out
+                    ? Carbon::parse($log->punch_out)->format('h:i A')
+                    : '-',
+            ];
+        })->values();
+
+        // Manual pagination
+        $total          = $lateComers->count();
+        $paginatedItems = $lateComers->forPage($page, $perPage)->values();
+
+        return $this->success([
+            'data' => $paginatedItems,
+            'meta' => [
+                'total'        => $total,
+                'per_page'     => $perPage,
+                'current_page' => $page,
+                'last_page'    => (int) ceil($total / $perPage),
+            ],
+        ]);
     }
 
     /**
@@ -572,7 +694,7 @@ class AttendanceApiController extends ApiController
                 // ignore and fall back to switch statement
             }
         }
-        
+
         switch ($preset) {
             case 'today':
                 return [$now->copy()->toDateString(), $now->copy()->toDateString()];

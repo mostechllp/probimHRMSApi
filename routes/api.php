@@ -111,6 +111,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
 
 
     // Attendance
+    Route::get('attendance/stats', [AttendanceApiController::class, 'stats'])->middleware('permission:attendance.read');
     Route::get('attendance', [AttendanceApiController::class, 'index'])->middleware('permission:attendance.read');
     Route::post('attendance', [AttendanceApiController::class, 'store'])->middleware('permission:attendance.edit');
     Route::put('attendance/{id}', [AttendanceApiController::class, 'update'])->middleware('permission:attendance.edit');
@@ -135,6 +136,8 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::apiResource('parties', PartyApiController::class);
     Route::apiResource('documents', DocumentApiController::class);
     Route::apiResource('folders', FolderApiController::class);
+    Route::get('documents/expiring', [DocumentApiController::class, 'getExpiringDocuments']);
+    Route::post('documents/send-expiry-alerts', [DocumentApiController::class, 'sendExpiryAlerts']);
     Route::post('documents/upload', [DocumentApiController::class, 'upload']);
     Route::get('documents-folders', [DocumentApiController::class, 'getFolders']);
     Route::get('shareable-users', [DocumentApiController::class, 'getShareableUsers']);

@@ -77,6 +77,7 @@ class Employee extends Model
         'company_mobile_number',
         'personal_number',
         'other_number',
+        'relative_number',
         'home_country_number',
         'company_email',
         'personal_email',
