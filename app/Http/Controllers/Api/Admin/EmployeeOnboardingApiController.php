@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Employee;
+use App\Models\EmployeeSalaryPackage;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +20,11 @@ class EmployeeOnboardingApiController extends ApiController
         $employee = null;
 
         if ($user_id) {
-            $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->firstOrFail();
+            $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->first();
+
+            if (!$employee) {
+                return $this->error('Employee not found with the provided ID', 404);
+            }
         } else {
             $employee = new Employee();
         }
@@ -42,9 +47,16 @@ class EmployeeOnboardingApiController extends ApiController
 
         DB::transaction(function () use ($request, &$employee) {
             $employeeData = $request->only([
-                'first_name', 'last_name', 'personal_email', 'personal_number', 
-                'nationality', 'address', 'joining_date', 'experience_level', 
-                'key_skills', 'highest_education'
+                'first_name',
+                'last_name',
+                'personal_email',
+                'personal_number',
+                'nationality',
+                'address',
+                'joining_date',
+                'experience_level',
+                'key_skills',
+                'highest_education'
             ]);
 
             if ($request->has('special_days')) {
@@ -54,7 +66,7 @@ class EmployeeOnboardingApiController extends ApiController
             if (!$employee->exists) {
                 // Generate a temporary user email if not provided
                 $userEmail = $request->personal_email ?? 'temp_' . \Illuminate\Support\Str::random(8) . '@example.com';
-                
+
                 // Create a User record
                 $user = \App\Models\User::create([
                     'username' => $userEmail,
@@ -73,7 +85,7 @@ class EmployeeOnboardingApiController extends ApiController
                 if (empty($employeeData['personal_email'])) {
                     $employeeData['personal_email'] = $userEmail;
                 }
-                
+
                 if (empty($employeeData['first_name'])) {
                     $employeeData['first_name'] = 'Draft';
                 }
@@ -86,9 +98,11 @@ class EmployeeOnboardingApiController extends ApiController
 
             if ($employee->user) {
                 $userData = [];
-                if ($request->has('department_id')) $userData['department_id'] = $request->department_id;
-                if ($request->has('designation_id')) $userData['designation_id'] = $request->designation_id;
-                
+                if ($request->has('department_id'))
+                    $userData['department_id'] = $request->department_id;
+                if ($request->has('designation_id'))
+                    $userData['designation_id'] = $request->designation_id;
+
                 if (!empty($userData)) {
                     $employee->user->update($userData);
                 }
@@ -98,47 +112,118 @@ class EmployeeOnboardingApiController extends ApiController
         return $this->success($employee->fresh()->load('user'), 'Employee details saved successfully');
     }
 
+    public function getSalaryPackages($id): JsonResponse
+    {
+
+        $packages = EmployeeSalaryPackage::where('employee_id', $id)->get();
+
+        return $this->success($packages, 'Salary packages fetched successfully');
+    }
+
     /**
      * Save salary structure details
      */
     public function saveSalary(Request $request): JsonResponse
     {
-        $user_id = $request->user_id;
+        $user_id = $request->user_id ?? $request->employee_id;
 
         if (!$user_id) {
-            return $this->error('User ID is required', 400);
+            return $this->error('User ID or Employee ID is required', 400);
         }
 
-        $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->firstOrFail();
+        $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->first();
+
+        if (!$employee) {
+            return $this->error('Employee not found with the provided ID', 404);
+        }
 
         $request->validate([
-            'currency' => 'required|string|max:255',
             'payment_cycle' => 'required|string|max:255',
-            'salary_components' => 'nullable|array',
-            'salary_components.*.component_name' => 'required|string|max:255',
-            'salary_components.*.value' => 'required|numeric|min:0',
+            'packages' => 'required|array',
+            'packages.*.name' => 'required|string|max:255',
+            'packages.*.currency' => 'required|string|max:255',
+            'packages.*.is_active' => 'required|boolean',
+            'packages.*.salary_components' => 'nullable|array',
+            'packages.*.salary_components.*.component_name' => 'required|string|max:255',
+            'packages.*.salary_components.*.value' => 'required|numeric|min:0',
         ]);
 
         DB::transaction(function () use ($request, $employee) {
             $employee->update([
-                'currency' => $request->currency,
                 'payment_cycle' => $request->payment_cycle,
             ]);
 
-            // Clear old components and insert new ones
+            // Clear old components
             $employee->salaryComponents()->delete();
 
-            if ($request->has('salary_components') && is_array($request->salary_components)) {
-                foreach ($request->salary_components as $component) {
-                    $employee->salaryComponents()->create([
-                        'component_name' => $component['component_name'],
-                        'value' => $component['value']
-                    ]);
+            if ($request->has('packages') && is_array($request->packages)) {
+                foreach ($request->packages as $pkgKey => $packageData) {
+                    $package = EmployeeSalaryPackage::firstOrCreate(
+                        [
+                            'employee_id' => $employee->id,
+                            'name' => $packageData['name'],
+                            'currency' => $packageData['currency'] ?? 'AED',
+                        ],
+                        [
+                            'is_active' => $packageData['is_active'] ?? true
+                        ]
+                    );
+
+
+                    if (isset($packageData['salary_components']) && is_array($packageData['salary_components'])) {
+                        foreach ($packageData['salary_components'] as $component) {
+                            $employee->salaryComponents()->create([
+                                'employee_salary_package_id' => $package->id,
+                                'component_name' => $component['component_name'],
+                                'value' => $component['value']
+                            ]);
+                        }
+                    }
                 }
             }
         });
 
-        return $this->success($employee->fresh()->load('salaryComponents'), 'Salary details saved successfully');
+        // Fetch the updated packages through components
+        $packageIds = $employee->salaryComponents()->pluck('employee_salary_package_id')->unique();
+        $packages = EmployeeSalaryPackage::whereIn('id', $packageIds)
+            ->with([
+                'salaryComponents' => function ($query) use ($employee) {
+                    $query->where('employee_id', $employee->id);
+                }
+            ])->get();
+
+        $packagesResponse = [];
+        $packageIndex = 1;
+        foreach ($packages as $package) {
+            $components = $package->salaryComponents->map(function ($comp) {
+                return [
+                    'id' => $comp->id,
+                    'component_name' => $comp->component_name,
+                    'value' => (float) $comp->value,
+                ];
+            })->toArray();
+
+            $totalMonthlySalary = collect($components)->sum('value');
+
+            $key = "package" . $packageIndex;
+            $packagesResponse[$key] = [
+                'id' => $package->id,
+                'name' => $package->name,
+                'currency' => $package->currency,
+                'is_active' => $package->is_active,
+                'total_monthly_salary' => $totalMonthlySalary,
+                'salary_components' => $components,
+            ];
+            $packageIndex++;
+        }
+
+        $responseData = [
+            'employee_id' => $employee->id,
+            'packages' => $packagesResponse,
+            'payment_cycle' => $employee->payment_cycle,
+        ];
+
+        return $this->success($responseData, 'Salary packages saved successfully');
     }
 
     /**
@@ -152,7 +237,11 @@ class EmployeeOnboardingApiController extends ApiController
             return $this->error('User ID is required', 400);
         }
 
-        $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->firstOrFail();
+        $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->first();
+
+        if (!$employee) {
+            return $this->error('Employee not found with the provided ID', 404);
+        }
 
         $request->validate([
             'bank_details' => 'nullable|array',
@@ -190,11 +279,15 @@ class EmployeeOnboardingApiController extends ApiController
             return $this->error('User ID is required', 400);
         }
 
-        $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->firstOrFail();
+        $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->first();
+
+        if (!$employee) {
+            return $this->error('Employee not found with the provided ID', 404);
+        }
 
         if ($employee->user) {
             $randomPassword = \Illuminate\Support\Str::random(10);
-            
+
             $employee->user->update([
                 'status' => 'onboarding',
                 'password' => \Illuminate\Support\Facades\Hash::make($randomPassword)
@@ -210,6 +303,6 @@ class EmployeeOnboardingApiController extends ApiController
             }
         }
 
-        return $this->success($employee->fresh()->load('user', 'salaryComponents', 'bankDetails'), 'Onboarding completed successfully');
+        return $this->success($employee->fresh()->load('user', 'salaryComponents.package', 'bankDetails'), 'Onboarding completed successfully');
     }
 }

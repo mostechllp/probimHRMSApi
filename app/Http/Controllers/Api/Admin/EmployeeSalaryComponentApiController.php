@@ -9,6 +9,19 @@ use Illuminate\Http\JsonResponse;
 
 class EmployeeSalaryComponentApiController extends ApiController
 {
+    public function store(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'employee_id' => 'required|integer',
+            'employee_salary_package_id' => 'required|integer',
+            'component_name' => 'required|string|max:255',
+            'value' => 'required|numeric|min:0',
+        ]);
+
+        $component = EmployeeSalaryComponent::create($validated);
+        return $this->success($component, 'Salary component created successfully');
+    }
+
     public function update(Request $request, $id): JsonResponse
     {
         $component = EmployeeSalaryComponent::findOrFail($id);

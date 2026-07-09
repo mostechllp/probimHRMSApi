@@ -20,21 +20,21 @@ return new class extends Migration
             $table->softDeletes();
         });
 
-        Schema::create('employee_project', function (Blueprint $table) {
+        Schema::create('project_user', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained('employees')->cascadeOnDelete();
+            $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('project_id')->constrained('projects')->cascadeOnDelete();
             $table->foreignId('assigned_by')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('deleted_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
             $table->softDeletes();
 
-            $table->unique(['employee_id', 'project_id', 'deleted_at']);
+            $table->unique(['user_id', 'project_id', 'deleted_at']);
         });
 
         Schema::create('project_time_logs', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained('users')->cascadeOnDelete();
+            $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('project_id')->constrained('projects')->cascadeOnDelete();
             $table->date('date');
             $table->integer('time_taken_minutes');
@@ -45,7 +45,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('project_time_logs');
-        Schema::dropIfExists('employee_project');
+        Schema::dropIfExists('project_user');
         Schema::dropIfExists('projects');
     }
 };

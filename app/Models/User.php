@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-use Tymon\JWTAuth\Contracts\JWTSubject;
+use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
 
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -142,5 +142,13 @@ class User extends Authenticatable implements JWTSubject
     public function designation()
     {
         return $this->belongsTo(Designation::class, 'designation_id');
+    }
+
+    public function projects()
+    {
+        return $this->belongsToMany(Project::class, 'employee_project', 'employee_id', 'project_id')
+            ->withPivot('assigned_by', 'deleted_by', 'deleted_at')
+            ->withTimestamps()
+            ->wherePivot('deleted_at', null);
     }
 }

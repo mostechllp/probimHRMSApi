@@ -70,6 +70,7 @@ return new class extends Migration
             $table->string('company_mobile_number')->nullable();
             $table->string('personal_number')->nullable();
             $table->string('other_number')->nullable();
+            $table->string('relative_number')->nullable();
             $table->string('home_country_number')->nullable();
             $table->string('company_email')->nullable();
             $table->string('personal_email');

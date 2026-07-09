@@ -36,7 +36,9 @@ return new class extends Migration
             $table->date('start_date');
             $table->date('end_date');
             $table->text('reason');
-            $table->integer('duration_days')->nullable();
+            $table->enum('session1', ['morning', 'afternoon'])->nullable();
+            $table->enum('session2', ['morning', 'afternoon'])->nullable();
+            $table->decimal('duration_days')->nullable();
             $table->boolean('claim_salary')->default(false);
             $table->string('document')->nullable();    // uploaded file path
             $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');

@@ -208,4 +208,60 @@ class DocumentApiController extends ApiController
 
         return $this->success($formatted);
     }
+
+    public function getExpiringDocuments(): JsonResponse
+    {
+        $thresholdDays = 30;
+        $today = \Carbon\Carbon::today();
+        $thresholdDate = $today->copy()->addDays($thresholdDays);
+
+        // General Documents
+        $expiringDocuments = Document::whereBetween('expiry_date', [$today, $thresholdDate])->get();
+
+        // Employee Documents
+        $expiringEmployees = \App\Models\Employee::where(function ($query) use ($today, $thresholdDate) {
+            $query->whereBetween('passport_expiry_date', [$today, $thresholdDate])
+                ->orWhereBetween('visa_expiry_date', [$today, $thresholdDate])
+                ->orWhereBetween('labor_expiry_date', [$today, $thresholdDate])
+                ->orWhereBetween('eid_expiry_date', [$today, $thresholdDate]);
+        })->get();
+
+        $employeeDocs = [];
+        $expiryFields = [
+            'passport_expiry_date' => 'Passport',
+            'visa_expiry_date' => 'Visa',
+            'labor_expiry_date' => 'Labor Card',
+            'eid_expiry_date' => 'EID'
+        ];
+
+        foreach ($expiringEmployees as $employee) {
+            $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
+            foreach ($expiryFields as $field => $label) {
+                if ($employee->$field && $employee->$field >= $today->toDateString() && $employee->$field <= $thresholdDate->toDateString()) {
+                    $employeeDocs[] = [
+                        'type' => 'employee_document',
+                        'document_type' => $label,
+                        'employee_name' => $employeeName,
+                        'expiry_date' => $employee->$field,
+                    ];
+                }
+            }
+        }
+
+        return $this->success([
+            'general_documents' => $expiringDocuments,
+            'employee_documents' => $employeeDocs
+        ]);
+    }
+
+    public function sendExpiryAlerts(): JsonResponse
+    {
+        \Illuminate\Support\Facades\Artisan::call('documents:check-expiry');
+        $output = \Illuminate\Support\Facades\Artisan::output();
+
+        return $this->success([
+            'message' => 'Expiry alerts sent successfully.',
+            'output' => trim($output)
+        ]);
+    }
 }
