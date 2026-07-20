@@ -53,15 +53,19 @@ class ProfileApiController extends ApiController
             'username' => 'nullable|string|max:255|unique:users,username,' . $user->id,
             'email'    => 'nullable|email|max:255|unique:users,email,' . $user->id,
             'avatar'   => 'nullable|string|starts_with:temp/',
+            'personal_number' => 'nullable|string|max:10',
+            'first_name' => 'nullable|string',
+            'last_name' => 'nullable|string',
+            'address' => 'nullable|string'
         ]);
 
         // Update user fields (no avatar here)
         $userData = $request->only('username', 'email');
         $user->update($userData);
+        $employee = $user->employee;
 
         // Handle avatar — store in employees table
         if ($request->hasFile('avatar')) {
-            $employee = $user->employee;
 
             if ($employee) {
                 // Delete old avatar if exists
@@ -92,6 +96,10 @@ class ProfileApiController extends ApiController
                 }
             }
         }
+
+        $employeeData = $request->only('first_name', 'last_name', 'personal_number', 'address');
+        $employee->update($employeeData);
+
 
         $user->load('employee');
 

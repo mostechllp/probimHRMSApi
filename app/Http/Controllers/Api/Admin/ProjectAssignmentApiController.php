@@ -220,30 +220,57 @@ class ProjectAssignmentApiController extends ApiController
      *
      * GET /api/v1/project-assignments/monthly-hours
      * Query params:
-     *   month       (int, 1-12, default: current month)
-     *   year        (int, default: current year)
+     *   date        (string Y-m-d, optional) – filter to a single day; derives month/year automatically
+     *   month       (int, 1-12, default: current month) – ignored when `date` is supplied
+     *   year        (int, default: current year)         – ignored when `date` is supplied
      *   project_id  (int, optional) – filter to a single project
      *   employee_id (int, optional) – filter to a single employee (employees.id PK)
      */
     public function monthlyProjectHours(Request $request): JsonResponse
     {
         $request->validate([
-            'month' => 'nullable|integer|min:1|max:12',
-            'year' => 'nullable|integer|min:2000',
-            'project_id' => 'nullable|exists:projects,id',
+            'date'        => 'nullable|date_format:Y-m-d',
+            'month'       => 'nullable|integer|min:1|max:12',
+            'year'        => 'nullable|integer|min:2000',
+            'project_id'  => 'nullable|exists:projects,id',
             'employee_id' => 'nullable|exists:employees,id',
         ]);
 
-        $month = (int) $request->input('month', Carbon::now()->month);
-        $year = (int) $request->input('year', Carbon::now()->year);
-        $projectId = $request->input('project_id');
+        $projectId  = $request->input('project_id');
         $employeeId = $request->input('employee_id');
 
-        $startDate = Carbon::createFromDate($year, $month, 1)->startOfMonth()->toDateString();
-        $endDate = Carbon::createFromDate($year, $month, 1)->endOfMonth()->toDateString();
+        // ------------------------------------------------------------------
+        // Date-range resolution
+        // When `date` is supplied → single-day filter; derive month & year.
+        // Otherwise fall back to month/year params (full-month range).
+        // ------------------------------------------------------------------
+        $filterDate = $request->input('date');
 
-        // Build base query on project_time_logs for the month
-        $logsQuery = ProjectTimeLog::with(['project', 'user.employee'])
+        if ($filterDate) {
+            $dateCarbon = Carbon::parse($filterDate);
+            $month      = $dateCarbon->month;
+            $year       = $dateCarbon->year;
+            $startDate  = $dateCarbon->toDateString();
+            $endDate    = $dateCarbon->toDateString();   // same day → single-day range
+        } else {
+            $month     = (int) $request->input('month', Carbon::now()->month);
+            $year      = (int) $request->input('year',  Carbon::now()->year);
+            $startDate = Carbon::createFromDate($year, $month, 1)->startOfMonth()->toDateString();
+            $endDate   = Carbon::createFromDate($year, $month, 1)->endOfMonth()->toDateString();
+        }
+
+        // Build base query on project_time_logs for the resolved date range.
+        // Eager-load user and employee (including soft-deleted) so inactive employees still resolve.
+        $logsQuery = ProjectTimeLog::with([
+            'project',
+            'user' => function ($q) {
+                $q->with([
+                    'employee' => function ($eq) {
+                        $eq->withTrashed();
+                    }
+                ]);
+            },
+        ])
             ->whereBetween('date', [$startDate, $endDate]);
 
         if ($projectId) {
@@ -251,31 +278,34 @@ class ProjectAssignmentApiController extends ApiController
         }
 
         if ($employeeId) {
-            // resolve to user_id for the log table, checking both PK and employee_id string
-            $emp = Employee::withInactive()
-                ->where('id', $employeeId)
-                ->first();
-                
+            // Resolve employees.id (PK) → user_id for the log table.
+            // Use withTrashed() so inactive/offboarded employees are included.
+            $emp = Employee::withTrashed()->find($employeeId);
+
             if (!$emp) {
-                return $this->error('User not found.', 404);
+                return $this->error('Employee not found.', 404);
             }
             $logsQuery->where('user_id', $emp->user_id);
         }
 
         $logs = $logsQuery->get();
 
+        // Build the base response meta that is shared across both empty and populated responses.
+        $meta = [
+            'month'  => $month,
+            'year'   => $year,
+            'period' => Carbon::createFromDate($year, $month, 1)->format('F Y'),
+        ];
+        if ($filterDate) {
+            $meta['date'] = $filterDate;
+        }
+
         if ($logs->isEmpty()) {
-            return $this->success([
-                'month' => $month,
-                'year' => $year,
-                'period' => Carbon::createFromDate($year, $month, 1)->format('F Y'),
-                'employees' => [],
-            ]);
+            return $this->success(array_merge($meta, ['employees' => []]));
         }
 
         // Group logs by user_id then project_id
-        $grouped = $logs->groupBy('user_id');
-
+        $grouped   = $logs->groupBy('user_id');
         $employees = [];
 
         foreach ($grouped as $userId => $userLogs) {
@@ -284,19 +314,19 @@ class ProjectAssignmentApiController extends ApiController
             $empRecord = $userModel?->employee;
 
             $projectBreakdown = [];
-            $totalMinutes = 0;
+            $totalMinutes     = 0;
 
             foreach ($userLogs->groupBy('project_id') as $projId => $projLogs) {
                 $projectModel = $projLogs->first()->project;
-                $minutes = (int) $projLogs->sum('time_taken_minutes');
+                $minutes      = (int) $projLogs->sum('time_taken_minutes');
                 $totalMinutes += $minutes;
 
                 $projectBreakdown[] = [
-                    'project_id' => $projId,
-                    'project_name' => $projectModel?->name ?? 'Unknown',
+                    'project_id'    => $projId,
+                    'project_name'  => $projectModel?->name ?? 'Unknown',
                     'total_minutes' => $minutes,
-                    'total_hours' => round($minutes / 60, 2),
-                    'formatted' => $this->formatMinutes($minutes),
+                    'total_hours'   => round($minutes / 60, 2),
+                    'formatted'     => $this->formatMinutes($minutes),
                 ];
             }
 
@@ -304,27 +334,24 @@ class ProjectAssignmentApiController extends ApiController
             usort($projectBreakdown, fn($a, $b) => $b['total_minutes'] <=> $a['total_minutes']);
 
             $employees[] = [
-                'id' => $empRecord?->id,
-                'user_id' => $empRecord?->user_id,
-                'name' => $empRecord
+                'id'              => $empRecord?->id,
+                'user_id'         => $empRecord?->user_id ?? $userId,
+                'employee_id'     => $empRecord?->employee_id,
+                'name'            => $empRecord
                     ? trim($empRecord->first_name . ' ' . $empRecord->last_name)
                     : ($userModel ? trim($userModel->first_name . ' ' . $userModel->last_name) : 'Unknown'),
-                'total_minutes' => $totalMinutes,
-                'total_hours' => round($totalMinutes / 60, 2),
+                'avatar'          => $empRecord?->avatar,
+                'total_minutes'   => $totalMinutes,
+                'total_hours'     => round($totalMinutes / 60, 2),
                 'total_formatted' => $this->formatMinutes($totalMinutes),
-                'projects' => $projectBreakdown,
+                'projects'        => $projectBreakdown,
             ];
         }
 
         // Sort employees by most time spent first
         usort($employees, fn($a, $b) => $b['total_minutes'] <=> $a['total_minutes']);
 
-        return $this->success([
-            'month' => $month,
-            'year' => $year,
-            'period' => Carbon::createFromDate($year, $month, 1)->format('F Y'),
-            'employees' => $employees,
-        ]);
+        return $this->success(array_merge($meta, ['employees' => $employees]));
     }
 
     /**

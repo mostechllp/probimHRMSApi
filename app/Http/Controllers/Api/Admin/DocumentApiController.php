@@ -248,6 +248,28 @@ class DocumentApiController extends ApiController
             }
         }
 
+        // Check additional_documents
+        $employeesWithAdditionalDocs = \App\Models\Employee::whereNotNull('additional_documents')->get();
+        foreach ($employeesWithAdditionalDocs as $employee) {
+            $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
+            $additionalDocs = $employee->additional_documents ?? [];
+            if (is_array($additionalDocs)) {
+                foreach ($additionalDocs as $doc) {
+                    if (isset($doc['expiry_date']) && $doc['expiry_date']) {
+                        $expiryDate = $doc['expiry_date'];
+                        if ($expiryDate >= $today->toDateString() && $expiryDate <= $thresholdDate->toDateString()) {
+                            $employeeDocs[] = [
+                                'type' => 'employee_document',
+                                'document_type' => $doc['document_name'] ?? 'Additional Document',
+                                'employee_name' => $employeeName,
+                                'expiry_date' => $expiryDate,
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
         return $this->success([
             'general_documents' => $expiringDocuments,
             'employee_documents' => $employeeDocs

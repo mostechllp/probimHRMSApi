@@ -20,12 +20,13 @@ class LeaveRequest extends Model
         'status',
         'approved_by',
         'admin_remark',
+        'applied_by'
     ];
 
 
     protected $casts = [
         'start_date' => 'date',
-        'end_date'   => 'date',
+        'end_date' => 'date',
     ];
 
     public function employee()
@@ -41,5 +42,10 @@ class LeaveRequest extends Model
     public function approver()
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function appliedBy()
+    {
+        return $this->belongsTo(User::class, 'applied_by');
     }
 }

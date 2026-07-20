@@ -56,7 +56,7 @@ class ReportApiController extends ApiController
 
         // Filter by employee ID
         if ($employeeId && $employeeId !== 'all') {
-            $employeesQuery->where('employee_id', $employeeId);
+            $employeesQuery->where('user_id', $employeeId);
         }
 
         // Filter by department
@@ -414,17 +414,21 @@ class ReportApiController extends ApiController
 
         list($startDate, $endDate) = $this->getDateRange($dateRange, $request->get('from_date'), $request->get('to_date'));
 
-        $empQuery = Employee::with(['user.department'])->whereRelation('user', 'status', 'active');
+        $empQuery = Employee::with(['user.department'])->whereHas('user', function ($q) {
+            $q->where('status', 'active')->where('type', '!=', 'admin');
+        });
         if ($employeeId && $employeeId !== 'all')
-            $empQuery->where('employee_id', $employeeId);
+            $empQuery->where('user_id', $employeeId);
         if ($departmentId && $departmentId !== 'all')
             $empQuery->whereRelation('user', 'department_id', $departmentId);
 
         $employees = $empQuery->get();
-        $employeeIds = $employees->pluck('employee_id')->toArray();
+        $userIds = $employees->pluck('user_id')->toArray();
+
+        $workingHours = WorkingHour::all()->keyBy(fn($wh) => strtolower($wh->day));
 
         $allLogs = AttendanceLog::whereBetween('log_date', [$startDate, $endDate])
-            ->whereIn('userid', $employeeIds)
+            ->whereIn('userid', $userIds)
             ->get()
             ->groupBy(['log_date', 'userid']);
 
@@ -435,18 +439,75 @@ class ReportApiController extends ApiController
         while ($tempDate <= $end) {
             $dateStr = $tempDate->toDateString();
             $dayLogs = $allLogs->get($dateStr, collect());
+
+            $dayName = strtolower($tempDate->format('l'));
+            $workingHourConfig = $workingHours->get($dayName);
+            $standardHours = 8;
+            if ($workingHourConfig && $workingHourConfig->is_enabled && $workingHourConfig->start_time && $workingHourConfig->end_time) {
+                $configStart = Carbon::createFromTimeString($workingHourConfig->start_time);
+                $configEnd = Carbon::createFromTimeString($workingHourConfig->end_time);
+                $standardHours = round($configStart->diffInMinutes($configEnd) / 60, 2);
+            }
+
             foreach ($employees as $emp) {
-                $empLogs = $dayLogs->get($emp->employee_id);
-                $punchIn = $empLogs ? $empLogs->min('punch_in') : null;
-                $punchOut = $empLogs ? $empLogs->max('punch_out') : null;
+                $attendance = $dayLogs->get($emp->user_id)?->first();
+                $punchIn = $attendance?->punch_in;
+                $punchOut = $attendance?->punch_out;
+
+                $workedHours = 0;
+                $overtimeMinutes = 0;
                 $status = 'Absent';
+
                 if ($punchIn) {
-                    $time = Carbon::parse($punchIn)->format('H:i:s');
-                    $status = ($time > '08:10:59' && $time <= '12:00:00') ? 'Late' : 'Present';
+                    $status = 'Present';
                 }
-                $data[] = [$dateStr, $emp->employee_id, $emp->first_name . ' ' . $emp->last_name, $emp->user->department->name ?? 'N/A', $punchIn ? Carbon::parse($punchIn)->format('H:i') : '-', $punchOut ? Carbon::parse($punchOut)->format('H:i') : '-', $status];
+
+                if ($punchIn && $punchOut) {
+                    $punchInTime = Carbon::parse($punchIn);
+                    $punchOutTime = Carbon::parse($punchOut);
+                    $workedMinutes = $punchInTime->diffInMinutes($punchOutTime);
+                    $workedHours = round($workedMinutes / 60, 2);
+
+                    if ($workedHours >= 8) {
+                        $status = 'Full Day';
+                    } elseif ($workedHours >= 4) {
+                        $status = 'Half Day';
+                    } else {
+                        $status = 'Absent';
+                    }
+
+                    $overtimeMinutes = max(0, (int) round(($workedHours - $standardHours) * 60));
+                }
+
+                $data[] = [
+                    $dateStr,
+                    $emp->employee_id,
+                    $emp->first_name . ' ' . $emp->last_name,
+                    $emp->user->department->name ?? 'N/A',
+                    $punchIn ? Carbon::parse($punchIn)->format('H:i') : '-',
+                    $punchOut ? Carbon::parse($punchOut)->format('H:i') : '-',
+                    $workedHours,
+                    $standardHours,
+                    $this->formatOvertimeMinutes($overtimeMinutes),
+                    $status
+                ];
             }
             $tempDate->addDay();
+        }
+
+        $totalRecords = count($data);
+
+        if (strtolower($request->get('format', '')) === 'pdf') {
+            $exportClass = new AttendanceExport($data);
+            $filename = "attendance_report_" . now()->format('YmdHis');
+            $pdf = Pdf::loadView('reports.attendance_pdf', [
+                'data'     => $exportClass->array(),
+                'headings' => $exportClass->headings(),
+                'title'    => $exportClass->title(),
+                'period'   => $startDate . ' to ' . $endDate,
+                'summary'  => 'Total Records: ' . $totalRecords,
+            ])->setPaper('a4', 'landscape');
+            return $pdf->download($filename . '.pdf');
         }
 
         return $this->downloadResponse(new AttendanceExport($data), "attendance_report", $request->get('format'));
