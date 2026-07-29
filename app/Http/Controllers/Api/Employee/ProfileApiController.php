@@ -51,17 +51,21 @@ class ProfileApiController extends ApiController
 
         $request->validate([
             'username' => 'nullable|string|max:255|unique:users,username,' . $user->id,
-            'email'    => 'nullable|email|max:255|unique:users,email,' . $user->id,
-            'avatar'   => 'nullable|string|starts_with:temp/',
+            'email' => 'nullable|email|max:255|unique:users,email,' . $user->id,
+            'avatar' => 'nullable|string|starts_with:temp/',
+            'personal_number' => 'nullable|string|max:10',
+            'first_name' => 'nullable|string',
+            'last_name' => 'nullable|string',
+            'address' => 'nullable|string'
         ]);
 
         // Update user fields (no avatar here)
         $userData = $request->only('username', 'email');
         $user->update($userData);
+        $employee = $user->employee;
 
         // Handle avatar — store in employees table
         if ($request->hasFile('avatar')) {
-            $employee = $user->employee;
 
             if ($employee) {
                 // Delete old avatar if exists
@@ -74,24 +78,28 @@ class ProfileApiController extends ApiController
             }
         } elseif ($request->filled('avatar') && str_starts_with($request->input('avatar'), 'temp/')) {
             $employee = $user->employee;
-            
+
             if ($employee) {
                 $tempPath = $request->input('avatar');
-                
+
                 if (\Illuminate\Support\Facades\Storage::disk('public')->exists($tempPath)) {
                     // Delete old avatar if exists
                     if ($employee->avatar) {
                         \Illuminate\Support\Facades\Storage::disk('public')->delete($employee->avatar);
                     }
-                    
+
                     $fileName = basename($tempPath);
                     $newPath = 'avatars/' . $fileName;
-                    
+
                     \Illuminate\Support\Facades\Storage::disk('public')->move($tempPath, $newPath);
                     $employee->update(['avatar' => $newPath]);
                 }
             }
         }
+
+        $employeeData = $request->only('first_name', 'last_name', 'personal_number', 'address');
+        $employee->update($employeeData);
+
 
         $user->load('employee');
 

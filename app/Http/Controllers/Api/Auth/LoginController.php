@@ -106,6 +106,8 @@ class LoginController extends ApiController
                 'employee' => $employee ? [
                     'id' => $employee->id,
                     'name' => trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? '')),
+                    'phone_number' => $employee->personal_number,
+                    'address' => $employee->address,
                     'employee_id' => $employee->employee_id,
                 ] : null,
                 'permissions' => $this->formatPermissions($user),

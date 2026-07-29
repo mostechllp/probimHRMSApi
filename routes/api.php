@@ -284,8 +284,11 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
 
     // Leaves
     Route::get('leaves', [EmployeePortalApiController::class, 'leaves']);
+    Route::get('leaves/{leave}', [EmployeePortalApiController::class, 'showLeave']);
     Route::get('leave-balance', [EmployeePortalApiController::class, 'leaveTypesAndBalance']);
     Route::post('leaves', [EmployeePortalApiController::class, 'storeLeave']);
+    Route::put('leaves/{leave}', [EmployeePortalApiController::class, 'updateLeave']);
+    Route::delete('leaves/{leave}', [EmployeePortalApiController::class, 'destroyLeave']);
     Route::get('leave-types', [LeaveTypeApiController::class, 'index']);
     Route::get('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'show']);
 

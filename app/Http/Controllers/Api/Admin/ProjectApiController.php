@@ -58,6 +58,9 @@ class ProjectApiController extends ApiController
             'description' => 'nullable|string',
             'project_manager_id' => 'nullable|exists:users,id',
             'team_lead_id' => 'nullable|exists:users,id',
+            'total_hours' => 'nullable|integer|min:0',
+            'total_cost' => 'nullable|numeric|min:0',
+            'currency' => 'nullable|string|max:10',
         ]);
 
         $project = Project::create([
@@ -65,6 +68,9 @@ class ProjectApiController extends ApiController
             'description' => $request->description,
             'project_manager_id' => $request->project_manager_id,
             'team_lead_id' => $request->team_lead_id,
+            'total_hours' => $request->total_hours,
+            'total_cost' => $request->total_cost,
+            'currency' => $request->currency,
             'created_by' => auth()->id(),
         ]);
 
@@ -84,14 +90,18 @@ class ProjectApiController extends ApiController
      */
     public function update(Request $request, Project $project): JsonResponse
     {
+
         $request->validate([
-            'name' => 'sometimes|required|string|max:255',
+            'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'project_manager_id' => 'nullable|exists:users,id',
             'team_lead_id' => 'nullable|exists:users,id',
+            'total_hours' => 'nullable|integer|min:0',
+            'total_cost' => 'nullable|numeric|min:0',
+            'currency' => 'nullable|string|max:10',
         ]);
 
-        $project->update($request->only(['name', 'description', 'project_manager_id', 'team_lead_id']));
+        $project->update($request->only(['name', 'description', 'project_manager_id', 'team_lead_id', 'total_hours', 'total_cost', 'currency']));
 
         return $this->success($project, 'Project updated successfully');
     }

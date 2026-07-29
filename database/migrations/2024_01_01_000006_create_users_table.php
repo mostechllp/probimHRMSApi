@@ -19,7 +19,7 @@ return new class extends Migration
             $table->foreignId('company_id')->nullable()->constrained('companies')->nullOnDelete();
             $table->foreignId('department_id')->nullable()->constrained('departments')->nullOnDelete();
             $table->foreignId('designation_id')->nullable()->constrained('designations')->nullOnDelete();
-            $table->enum('type', ['admin', 'employee'])->default('employee');
+            $table->enum('type', ['admin', 'employee', 'hr', 'manager', 'team_lead'])->default('employee');
             $table->enum('status', ['active', 'inactive', 'onboarding'])->default('active');
             $table->integer('created_by')->nullable();
             $table->integer('deleted_by')->nullable();

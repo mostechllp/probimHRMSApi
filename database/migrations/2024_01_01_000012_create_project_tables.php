@@ -14,6 +14,9 @@ return new class extends Migration
             $table->text('description')->nullable();
             $table->foreignId('project_manager_id')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('team_lead_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->integer('total_hours')->nullable();
+            $table->decimal('total_cost', 10, 2)->nullable();
+            $table->string('currency', 10)->default('USD');
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('deleted_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();

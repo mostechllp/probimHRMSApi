@@ -14,6 +14,9 @@ class Project extends Model
         'description',
         'project_manager_id',
         'team_lead_id',
+        'total_hours',
+        'total_cost',
+        'currency',
         'created_by',
         'deleted_by',
     ];
