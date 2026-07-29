@@ -51,8 +51,8 @@ class ProfileApiController extends ApiController
 
         $request->validate([
             'username' => 'nullable|string|max:255|unique:users,username,' . $user->id,
-            'email'    => 'nullable|email|max:255|unique:users,email,' . $user->id,
-            'avatar'   => 'nullable|string|starts_with:temp/',
+            'email' => 'nullable|email|max:255|unique:users,email,' . $user->id,
+            'avatar' => 'nullable|string|starts_with:temp/',
             'personal_number' => 'nullable|string|max:10',
             'first_name' => 'nullable|string',
             'last_name' => 'nullable|string',
@@ -78,19 +78,19 @@ class ProfileApiController extends ApiController
             }
         } elseif ($request->filled('avatar') && str_starts_with($request->input('avatar'), 'temp/')) {
             $employee = $user->employee;
-            
+
             if ($employee) {
                 $tempPath = $request->input('avatar');
-                
+
                 if (\Illuminate\Support\Facades\Storage::disk('public')->exists($tempPath)) {
                     // Delete old avatar if exists
                     if ($employee->avatar) {
                         \Illuminate\Support\Facades\Storage::disk('public')->delete($employee->avatar);
                     }
-                    
+
                     $fileName = basename($tempPath);
                     $newPath = 'avatars/' . $fileName;
-                    
+
                     \Illuminate\Support\Facades\Storage::disk('public')->move($tempPath, $newPath);
                     $employee->update(['avatar' => $newPath]);
                 }

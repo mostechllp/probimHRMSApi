@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\EmployeeSalaryPackage;
 use App\Models\Payroll;
 use App\Models\Employee;
 use Illuminate\Http\Request;
@@ -12,6 +13,7 @@ use Carbon\Carbon;
 use App\Models\AttendanceLog;
 use App\Models\WorkingHour;
 use App\Models\ProjectTimeLog;
+use App\Models\EmployeeSalaryComponent;
 
 class PayrollController extends Controller
 {
@@ -123,24 +125,11 @@ class PayrollController extends Controller
         $employeeId = $request->employee_id;
         $month = $request->month;
 
-        $employee = Employee::with([
-            'salaryPackages' => function ($query) {
-                $query->where('is_active', true)->with('salaryComponents');
-            }
-        ])->where('user_id', $employeeId)->first();
+        $employee = Employee::where('user_id', $employeeId)->first();
 
         if (!$employee) {
             return response()->json(['success' => false, 'message' => 'Employee not found'], 404);
         }
-
-        $packages = $employee->salaryPackages;
-        if ($packages->isEmpty()) {
-            return response()->json(['success' => false, 'message' => 'No active salary packages found for this employee'], 404);
-        }
-
-        // Differentiate Dubai (AED) package from Home package
-        $dubaiPackage = $packages->firstWhere('currency', 'AED') ?? $packages->first();
-        $homePackage = $packages->firstWhere('currency', '!=', 'AED') ?? $dubaiPackage;
 
         // Fetch Attendance Logs for the month
         $startDate = Carbon::createFromFormat('Y-m', $month)->startOfMonth()->toDateString();
@@ -167,6 +156,24 @@ class PayrollController extends Controller
         $locationBreakdown = [];
         $totalEarnings = 0;
 
+        // Load salary packages for this employee via employee_salary_components
+        // (employee_salary_packages has no employee_id; the employee link is in employee_salary_components)
+        $employeeSalaryPackages = EmployeeSalaryPackage::where('employee_id', $employee->id)
+            ->with('salaryComponents')
+            ->get();
+
+        if ($employeeSalaryPackages->isEmpty()) {
+            return response()->json(['success' => false, 'message' => 'No active salary packages found for this employee'], 404);
+        } 
+
+        foreach($employeeSalaryPackages as $employeeSalaryPackage){
+            if($employeeSalaryPackage->currency == 'AED'){
+                $dubaiPackageData = $employeeSalaryPackage;
+            }else{
+                $homePackageData = $employeeSalaryPackage;
+            }
+        }
+
         foreach ($groupedByLocation as $locationName => $logs) {
             $locationName = $locationName ?: 'Unknown';
             $workedDays = $logs->count();
@@ -174,7 +181,20 @@ class PayrollController extends Controller
             // Determine if location is Dubai-related
             $isDubaiLocation = false;
             $locLower = strtolower($locationName);
-            $uaeKeywords = ['dubai', 'abu dhabi', 'sharjah', 'ajman', 'fujairah', 'ras al khaimah', 'umm al quwain', 'uae'];
+            $uaeKeywords = [
+                'united arab emirates',
+                'uae',
+                'dubai',
+                'abu dhabi',
+                'sharjah',
+                'ajman',
+                'fujairah',
+                'ras al khaimah',
+                'umm al quwain',
+                'umm al quwain',
+                'rak',
+                'al ain'
+            ];
             foreach ($uaeKeywords as $keyword) {
                 if (str_contains($locLower, $keyword)) {
                     $isDubaiLocation = true;
@@ -182,13 +202,15 @@ class PayrollController extends Controller
                 }
             }
 
-            $selectedPackage = $isDubaiLocation ? $dubaiPackage : $homePackage;
-            // $ratio = $workedDays / $workingDays;
+            // Select the correct package data (array with 'package' and 'components' keys)
+            $selectedPackageData = $isDubaiLocation ? $dubaiPackageData : $homePackageData;
+            $selectedPackage = $selectedPackageData;
+            $selectedComponents = $selectedPackageData->salaryComponents;
 
             $componentsData = [];
             $subtotal = 0;
 
-            foreach ($selectedPackage->salaryComponents as $component) {
+            foreach ($selectedComponents as $component) {
                 // Daily amount of this salary component
                 $dailyAmount = $component->value / $workingDays;
 

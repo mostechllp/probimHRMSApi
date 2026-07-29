@@ -173,7 +173,7 @@ class UpdateEmployeeRequest extends FormRequest
                     ->whereNull('deleted_at')    
                     ->ignore($this->user?->id)     
             ],
-            'type' => 'required|in:admin,employee',
+            'type' => 'required|in:admin,employee,hr,team_lead,manager',
             'role_id' => 'required',
         ];
     }
