@@ -230,6 +230,20 @@ class AttendanceApiController extends ApiController
                 $punchIn = $attendance?->punch_in;
                 $punchOut = $attendance?->punch_out;
 
+                $timezone = $attendance?->timezone ?? config('app.timezone');
+
+                $abbr = match ($timezone) {
+                    'Asia/Kolkata',
+                    'Asia/Calcutta',
+                    'IST',
+                    '+05:30',
+                    'UTC+05:30' => 'IST',
+                    'Asia/Dubai',
+                    'GST',
+                    '+04:00',
+                    'UTC+04:00' => 'GST',
+                    default => Carbon::now($timezone)->format('T'),
+                };
                 $workedHours = 0;
                 $overtimeMinutes = 0;
 
@@ -264,6 +278,7 @@ class AttendanceApiController extends ApiController
                     $overtimeMinutes = max(0, (int) round(($workedHours - $standardHours) * 60));
                 }
 
+
                 $reportData[] = [
                     'employee_id' => $employee->employee_id,
                     'name' => trim($employee->first_name . ' ' . $employee->last_name),
@@ -272,10 +287,10 @@ class AttendanceApiController extends ApiController
                     'company' => $employee->user->company->name ?? 'N/A',
                     'date' => $date,
                     'punch_in' => $punchIn
-                        ? Carbon::parse($punchIn)->format('h:i A')
+                        ? Carbon::parse($punchIn)->format('h:i A') . ' ' . $abbr
                         : '-',
                     'punch_out' => $punchOut
-                        ? Carbon::parse($punchOut)->format('h:i A')
+                        ? Carbon::parse($punchOut)->format('h:i A') . ' ' . $abbr
                         : '-',
                     'worked_hours' => $workedHours,
                     'standard_hours' => $standardHours,
@@ -288,15 +303,40 @@ class AttendanceApiController extends ApiController
         }
 
         // Sort by latest date first
+        // usort($reportData, function ($a, $b) {
+
+        //     if ($a['date'] === $b['date']) {
+        //         return strcmp($a['employee_id'], $b['employee_id']);
+        //     }
+
+        //     return strcmp($b['date'], $a['date']);
+        // });
+// Sort by latest date, then status, then employee ID
         usort($reportData, function ($a, $b) {
 
-            if ($a['date'] === $b['date']) {
-                return strcmp($a['employee_id'], $b['employee_id']);
+            // Latest date first
+            if ($a['date'] !== $b['date']) {
+                return strcmp($b['date'], $a['date']);
             }
 
-            return strcmp($b['date'], $a['date']);
-        });
+            // Status priority
+            $statusOrder = [
+                'Full Day' => 1,
+                'Half Day' => 2,
+                'Present' => 3,
+                'Absent' => 4,
+            ];
 
+            $statusA = $statusOrder[$a['status']] ?? 99;
+            $statusB = $statusOrder[$b['status']] ?? 99;
+
+            if ($statusA !== $statusB) {
+                return $statusA <=> $statusB;
+            }
+
+            // Employee ID ascending
+            return strcmp($a['employee_id'], $b['employee_id']);
+        });
         // Pagination
         $currentPage = (int) $request->get('page', 1);
 
@@ -334,9 +374,9 @@ class AttendanceApiController extends ApiController
             ->groupBy('userid')
             ->get()
             ->keyBy('userid'); // assuming userid in AttendanceLog is employee_id (string) or user_id (int). Based on codebase, it's usually employee_id or user_id. Wait, AttendanceLog uses user_id or employee_id?
-            // In DashboardApiController: $todayLogs = AttendanceLog::whereDate('log_date', $today)... ->groupBy('userid')->get();
-            // Let's assume userid maps to user_id or employee_id. The previous code uses it.
-            // Let's key by userid to easily check.
+        // In DashboardApiController: $todayLogs = AttendanceLog::whereDate('log_date', $today)... ->groupBy('userid')->get();
+        // Let's assume userid maps to user_id or employee_id. The previous code uses it.
+        // Let's key by userid to easily check.
 
         $result = [
             'total' => ['count' => 0, 'employees' => []],
@@ -487,8 +527,8 @@ class AttendanceApiController extends ApiController
      */
     public function lateComers(Request $request): JsonResponse
     {
-        $perPage  = (int) $request->get('per_page', 15);
-        $page     = (int) $request->get('page', 1);
+        $perPage = (int) $request->get('per_page', 15);
+        $page = (int) $request->get('page', 1);
         $datePreset = $request->get('date_preset', 'today');
 
         // Load working hours keyed by lowercase day name
@@ -511,16 +551,16 @@ class AttendanceApiController extends ApiController
 
         $lateComers = $allLogs->filter(function ($log) use ($workingHours) {
             $dayName = strtolower(Carbon::parse($log->log_date)->format('l')); // e.g. 'monday'
-            $config  = $workingHours->get($dayName);
+            $config = $workingHours->get($dayName);
 
             // Skip days that have no config or are disabled
             if (!$config || !$config->is_enabled || !$config->start_time) {
                 return false;
             }
 
-            $punchInTime  = Carbon::parse($log->punch_in)->format('H:i:s');
-            $configStart  = Carbon::createFromTimeString($config->start_time)->format('H:i:s');
-            $noonCutoff   = '12:00:00';
+            $punchInTime = Carbon::parse($log->punch_in)->format('H:i:s');
+            $configStart = Carbon::createFromTimeString($config->start_time)->format('H:i:s');
+            $noonCutoff = '12:00:00';
 
             // Late = punched in after the configured start time but before noon
             return $punchInTime > $configStart && $punchInTime <= $noonCutoff;
@@ -530,32 +570,32 @@ class AttendanceApiController extends ApiController
             return [
                 'id' => $employee->id,
                 'user_id' => $employee?->user_id ?? null,
-                'employee_id'  => $employee?->employee_id ?? null,
-                'name'         => $employee
+                'employee_id' => $employee?->employee_id ?? null,
+                'name' => $employee
                     ? trim($employee->first_name . ' ' . $employee->last_name)
                     : ($log->user?->name ?? 'Unknown'),
-                'department'   => $log->user?->department?->name ?? 'N/A',
-                'designation'  => $log->user?->designation?->name ?? 'N/A',
-                'company_id'   => $log->company_id,
-                'log_date'     => $log->log_date,
-                'punch_in'     => Carbon::parse($log->punch_in)->format('h:i A'),
-                'punch_out'    => $log->punch_out
+                'department' => $log->user?->department?->name ?? 'N/A',
+                'designation' => $log->user?->designation?->name ?? 'N/A',
+                'company_id' => $log->company_id,
+                'log_date' => $log->log_date,
+                'punch_in' => Carbon::parse($log->punch_in)->format('h:i A'),
+                'punch_out' => $log->punch_out
                     ? Carbon::parse($log->punch_out)->format('h:i A')
                     : '-',
             ];
         })->values();
 
         // Manual pagination
-        $total          = $lateComers->count();
+        $total = $lateComers->count();
         $paginatedItems = $lateComers->forPage($page, $perPage)->values();
 
         return $this->success([
             'data' => $paginatedItems,
             'meta' => [
-                'total'        => $total,
-                'per_page'     => $perPage,
+                'total' => $total,
+                'per_page' => $perPage,
                 'current_page' => $page,
-                'last_page'    => (int) ceil($total / $perPage),
+                'last_page' => (int) ceil($total / $perPage),
             ],
         ]);
     }
