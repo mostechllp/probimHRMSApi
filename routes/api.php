@@ -144,6 +144,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
 
     // Projects
     Route::get('projects/eligible-managers', [ProjectApiController::class, 'getEligibleManagers']);
+    Route::get('projects/eligible-team-leads', [ProjectApiController::class, 'getEligibleTeamLeads']);
     Route::apiResource('projects', ProjectApiController::class);
     Route::get('project-assignments', [ProjectAssignmentApiController::class, 'index']);
     Route::get('project-assignments/monthly-hours', [ProjectAssignmentApiController::class, 'monthlyProjectHours']);
@@ -169,6 +170,8 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::get('leaves', [LeaveApiController::class, 'index'])->middleware('permission:leaves.read');
     Route::get('leaves/{leaveRequest}', [LeaveApiController::class, 'show'])->middleware('permission:leaves.read');
     Route::post('leaves', [LeaveApiController::class, 'store'])->middleware('permission:leaves.create');
+    Route::post('leaves/{leaveRequest}', [LeaveApiController::class, 'update'])->middleware('permission:leaves.edit');
+    Route::delete('leaves/{leaveRequest}', [LeaveApiController::class, 'destroy'])->middleware('permission:leaves.delete');
     Route::post('leaves/{leaveRequest}/status', [LeaveApiController::class, 'updateStatus'])->middleware('permission:leaves.edit');
 
     // WFH Requests (Admin side)
@@ -288,8 +291,9 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::get('leave-balance', [EmployeePortalApiController::class, 'leaveTypesAndBalance']);
     Route::post('leaves', [EmployeePortalApiController::class, 'storeLeave']);
     Route::put('leaves/{leave}', [EmployeePortalApiController::class, 'updateLeave']);
+    Route::post('leaves/{leave}', [EmployeePortalApiController::class, 'updateLeave']);
     Route::delete('leaves/{leave}', [EmployeePortalApiController::class, 'destroyLeave']);
-    Route::get('leave-types', [LeaveTypeApiController::class, 'index']);
+    Route::get('leave-types', [LeaveTypeApiController::class, 'getAllLeaveTypes']);
     Route::get('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'show']);
 
 

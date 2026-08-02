@@ -41,17 +41,17 @@ class DashboardApiController extends ApiController
             ->select('userid', DB::raw('MIN(punch_in) as punch_in'))
             ->groupBy('userid')
             ->get();
-            
-        $punchedInToday = $todayLogs->filter(function($log) {
+
+        $punchedInToday = $todayLogs->filter(function ($log) {
             return !is_null($log->punch_in);
         });
-        
-        $onTimeCount = $punchedInToday->filter(function($log) {
+
+        $onTimeCount = $punchedInToday->filter(function ($log) {
             $time = Carbon::parse($log->punch_in)->format('H:i:s');
             return $time < '08:11:00';
         })->count();
-        
-        $lateCount = $punchedInToday->filter(function($log) {
+
+        $lateCount = $punchedInToday->filter(function ($log) {
             $time = Carbon::parse($log->punch_in)->format('H:i:s');
             return $time >= '08:11:00';
         })->count();
@@ -59,7 +59,7 @@ class DashboardApiController extends ApiController
         $wfhCount = WfhRequest::where('status', 'approved')
             ->whereDate('date', $today)
             ->count();
-            
+
         $leaveCount = LeaveRequest::where('status', 'approved')
             ->whereDate('start_date', '<=', $today)
             ->whereDate('end_date', '>=', $today)
@@ -73,24 +73,26 @@ class DashboardApiController extends ApiController
             "Late" => $lateCount,
             "Absent" => $absentCount,
             "WFH" => $wfhCount,
-            "Leave" => $leaveCount
+            "Leave" => $leaveCount,
+            "punched_in" => $presentTotal,
         ];
 
         // 2. AVERAGE PUNCH-IN TIME
         $thisWeekLogs = AttendanceLog::whereBetween('log_date', [$thisWeekStart, $thisWeekEnd])
             ->whereNotNull('punch_in')
             ->get();
-        
+
         $lastWeekLogs = AttendanceLog::whereBetween('log_date', [$lastWeekStart, $lastWeekEnd])
             ->whereNotNull('punch_in')
             ->get();
 
         $calcAvgTime = function ($logs) {
-            if ($logs->isEmpty()) return null;
+            if ($logs->isEmpty())
+                return null;
             $totalMinutes = 0;
             foreach ($logs as $log) {
                 $parts = explode(':', Carbon::parse($log->punch_in)->format('H:i'));
-                $totalMinutes += (int)$parts[0] * 60 + (int)$parts[1];
+                $totalMinutes += (int) $parts[0] * 60 + (int) $parts[1];
             }
             $avgMinutes = (int) round($totalMinutes / $logs->count());
             return sprintf('%02d:%02d', intdiv($avgMinutes, 60), $avgMinutes % 60);
@@ -103,9 +105,9 @@ class DashboardApiController extends ApiController
         if ($thisWeekAvg !== '00:00' && $lastWeekAvg !== '00:00') {
             $thisParts = explode(':', $thisWeekAvg);
             $lastParts = explode(':', $lastWeekAvg);
-            $thisMins = (int)$thisParts[0] * 60 + (int)$thisParts[1];
-            $lastMins = (int)$lastParts[0] * 60 + (int)$lastParts[1];
-            
+            $thisMins = (int) $thisParts[0] * 60 + (int) $thisParts[1];
+            $lastMins = (int) $lastParts[0] * 60 + (int) $lastParts[1];
+
             if ($thisMins < $lastMins) {
                 $trend = ($lastMins - $thisMins) . " min earlier than last week";
             } elseif ($thisMins > $lastMins) {
@@ -122,7 +124,7 @@ class DashboardApiController extends ApiController
             $val = 0.0;
             if ($avgStr) {
                 $parts = explode(':', $avgStr);
-                $val = (int)$parts[0] + ((int)$parts[1] / 60);
+                $val = (int) $parts[0] + ((int) $parts[1] / 60);
             }
             $dailyAvg[] = ["day" => $dayName, "value" => round($val, 2)];
         }
@@ -144,7 +146,7 @@ class DashboardApiController extends ApiController
         $recentPunches = $recentPunchLogs->map(function ($log) {
             $time = Carbon::parse($log->punch_in)->format('H:i:s');
             $status = $time < '08:11:00' ? 'on_time' : 'late';
-            
+
             $name = 'Unknown';
             if ($log->user && $log->user->employee) {
                 $emp = $log->user->employee;
@@ -162,10 +164,15 @@ class DashboardApiController extends ApiController
 
         // 4. PUNCH-IN DISTRIBUTION
         $distribution = [
-            "8:00" => 0, "8:30" => 0, "9:00" => 0, "9:30" => 0,
-            "10:00" => 0, "10:30" => 0, "11:00" => 0
+            "8:00" => 0,
+            "8:30" => 0,
+            "9:00" => 0,
+            "9:30" => 0,
+            "10:00" => 0,
+            "10:30" => 0,
+            "11:00" => 0
         ];
-        
+
         foreach ($punchedInToday as $log) {
             $time = Carbon::parse($log->punch_in)->format('H:i:s');
             if ($time < '08:30:00') {
@@ -184,7 +191,7 @@ class DashboardApiController extends ApiController
                 $distribution["11:00"]++;
             }
         }
-        
+
         $punchDistribution = [];
         foreach ($distribution as $label => $val) {
             $punchDistribution[] = ["label" => $label, "value" => $val];
@@ -212,9 +219,9 @@ class DashboardApiController extends ApiController
             ->orderByDesc('employees')
             ->take(8)
             ->get();
-            
+
         $projectAllocation = $projectAllocationData->map(function ($item) {
-            return ["name" => $item->name, "employees" => (int)$item->employees];
+            return ["name" => $item->name, "employees" => (int) $item->employees];
         })->toArray();
 
         // 7. PROJECT HOURS
@@ -236,17 +243,17 @@ class DashboardApiController extends ApiController
 
         for ($i = 0; $i < 7; $i++) {
             $date = Carbon::now()->startOfWeek()->addDays($i)->toDateString();
-            
+
             $present = AttendanceLog::whereDate('log_date', $date)
                 ->whereNotNull('punch_in')
                 ->distinct('userid')
                 ->count('userid');
-                
+
             $leave = LeaveRequest::where('status', 'approved')
                 ->whereDate('start_date', '<=', $date)
                 ->whereDate('end_date', '>=', $date)
                 ->count();
-                
+
             $presentArray[] = $present;
             $leaveArray[] = $leave;
         }

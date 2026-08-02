@@ -421,7 +421,25 @@ class EmployeePortalApiController extends ApiController
         if (!$employee)
             return $this->error('Employee profile not found', 404);
 
-        $leaves = LeaveRequest::with('leaveType', 'appliedBy', 'approver')->where('employee_id', $employee->id)->latest()->get();
+        $leaves = LeaveRequest::with('leaveType', 'appliedBy', 'approver.employee:id,user_id,first_name,last_name',
+            'approver.role:id,name')->where('employee_id', $employee->id)->latest()->get();
+        $leaves->transform(function ($leave) {
+
+            $leave->applied_by = [
+                'user_id' => $leave->appliedBy?->id,
+                'employee_name' => $leave->appliedBy?->employee?->first_name . ' ' . $leave->appliedBy?->employee?->last_name,
+                'role' => $leave->appliedBy?->role,
+            ];
+
+            $leave->unsetRelation('appliedBy');
+
+            if (!empty($leave->document)) {
+                $leave->document = asset('storage/' . ltrim($leave->document, '/'));
+            }
+
+            return $leave;
+        });
+
         return $this->success([
             'leaves' => $leaves
         ]);
@@ -509,7 +527,7 @@ class EmployeePortalApiController extends ApiController
             return $this->error('Medical certificate is required for sick leave', 422);
         }
 
-        // ── Duration calculation based on session1 / session2 ──────────────────
+        // ── Duration calculation based on session1 / session2, excluding Sundays ──
         // session1 = session for start_date: 'morning' (from morning = full) | 'afternoon' (from afternoon = half)
         // session2 = session for end_date:   'morning' (until morning = half) | 'afternoon' (until afternoon = full)
         $start = Carbon::parse($request->start_date);
@@ -517,24 +535,30 @@ class EmployeePortalApiController extends ApiController
         $session1 = $request->input('session1', 'morning');   // default: full start day
         $session2 = $request->input('session2', 'afternoon'); // default: full end day
 
-        $startContrib = ($session1 === 'morning') ? 1.0 : 0.5;
-        $endContrib = ($session2 === 'afternoon') ? 1.0 : 0.5;
+        $durationDays = 0.0;
+        $currentDate = $start->copy();
 
-        $totalDays = $start->diffInDays($end); // number of days between (exclusive end)
-
-        if ($totalDays === 0) {
-            // Single-day leave
-            if ($session1 === 'morning' && $session2 === 'afternoon') {
-                $durationDays = 1.0; // full day
-            } else if ($session1 === 'morning' && $session2 === 'morning') {
-                $durationDays = 0.5; // half day
-            } else if ($session1 === 'afternoon' && $session2 === 'afternoon') {
-                $durationDays = 0.5; // half day
+        while ($currentDate->lte($end)) {
+            if ($currentDate->isSunday()) {
+                $currentDate->addDay();
+                continue;
             }
-        } else {
-            // Multi-day leave
-            $middleDays = $totalDays - 1;
-            $durationDays = $startContrib + $middleDays + $endContrib;
+
+            if ($currentDate->isSameDay($start) && $currentDate->isSameDay($end)) {
+                if ($session1 === 'morning' && $session2 === 'afternoon') {
+                    $durationDays += 1.0;
+                } else {
+                    $durationDays += 0.5;
+                }
+            } elseif ($currentDate->isSameDay($start)) {
+                $durationDays += ($session1 === 'morning') ? 1.0 : 0.5;
+            } elseif ($currentDate->isSameDay($end)) {
+                $durationDays += ($session2 === 'afternoon') ? 1.0 : 0.5;
+            } else {
+                $durationDays += 1.0;
+            }
+
+            $currentDate->addDay();
         }
 
         // Balance check
@@ -587,10 +611,23 @@ class EmployeePortalApiController extends ApiController
         if (!$employee)
             return $this->error('Employee profile not found', 404);
 
-        $leave = LeaveRequest::with(['leaveType', 'appliedBy', 'approver'])->where('employee_id', $employee->id)->find($id);
+        $leave = LeaveRequest::with(['leaveType', 'appliedBy', 'approver.employee:id,user_id,first_name,last_name',
+            'approver.role:id,name'])->where('employee_id', $employee->id)->find($id);
 
         if (!$leave)
             return $this->error('Leave request not found', 404);
+
+        $leave->applied_by = [
+            'user_id' => $leave->appliedBy?->id,
+            'employee_name' => $leave->appliedBy?->employee?->first_name . ' ' . $leave->appliedBy?->employee?->last_name,
+            'role' => $leave->appliedBy?->role,
+        ];
+
+        $leave->unsetRelation('appliedBy');
+
+        if (!empty($leave->document)) {
+            $leave->document = asset('storage/' . ltrim($leave->document, '/'));
+        }
 
         return $this->success($leave);
     }
@@ -912,5 +949,94 @@ class EmployeePortalApiController extends ApiController
         $wfh->delete();
 
         return $this->success(null, 'WFH request deleted successfully');
+    }
+
+
+    public function destroyLeave($id): JsonResponse
+    {
+        $user = auth('api')->user();
+        $employee = $user ? $user->employee : null;
+        if (!$employee)
+            return $this->error('Employee profile not found', 404);
+
+        $leave = LeaveRequest::where('employee_id', $employee->id)->find($id);
+
+        if (!$leave) {
+            return $this->error('Leave request not found', 404);
+        }
+
+        if ($leave->status !== 'pending') {
+            return $this->error('Only pending leave requests can be deleted.', 400);
+        }
+
+        $leave->delete();
+
+        return $this->success(null, 'Leave request deleted successfully');
+    }
+
+    private function parseMultipartPut(Request $request): void
+    {
+        if (!$request->isMethod('PUT') && !$request->isMethod('PATCH')) {
+            return;
+        }
+
+        $contentType = $request->header('Content-Type');
+        if (!$contentType || !str_contains($contentType, 'multipart/form-data')) {
+            return;
+        }
+
+        preg_match('/boundary=(.*)$/', $contentType, $matches);
+        if (empty($matches)) {
+            return;
+        }
+        $boundary = $matches[1];
+
+        $rawContent = $request->getContent();
+        $parts = preg_split('/-+' . preg_quote($boundary, '/') . '/', $rawContent);
+
+        $inputs = [];
+        $files = [];
+
+        foreach ($parts as $part) {
+            if (empty(trim($part)) || $part === '--' || $part === "--\r\n") {
+                continue;
+            }
+
+            $parts2 = explode("\r\n\r\n", $part, 2);
+            if (count($parts2) < 2) {
+                continue;
+            }
+            $headersStr = $parts2[0];
+            $body = substr($parts2[1], 0, -2); // remove trailing \r\n
+
+            preg_match('/name="([^"]+)"/', $headersStr, $nameMatch);
+            if (empty($nameMatch)) {
+                continue;
+            }
+            $name = $nameMatch[1];
+
+            preg_match('/filename="([^"]+)"/', $headersStr, $filenameMatch);
+            if (!empty($filenameMatch)) {
+                $filename = $filenameMatch[1];
+                preg_match('/Content-Type:\s*([^\s;]+)/', $headersStr, $typeMatch);
+                $mimeType = $typeMatch[1] ?? 'application/octet-stream';
+
+                $tempPath = tempnam(sys_get_temp_dir(), 'laravel_upload_');
+                file_put_contents($tempPath, $body);
+
+                $files[$name] = new \Illuminate\Http\UploadedFile(
+                    $tempPath,
+                    $filename,
+                    $mimeType,
+                    null,
+                    true // test mode
+                );
+            } else {
+                $inputs[$name] = $body;
+            }
+        }
+
+        $request->merge($inputs);
+        $request->files->add($files);
     }
 }

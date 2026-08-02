@@ -250,7 +250,7 @@ class AttendanceApiController extends ApiController
                 if ($punchIn) {
                     $status = 'Present';
                 } else {
-                    $status = 'Absent';
+                    $status = $currentDate->isSunday() ? 'Weekly Off' : 'Absent';
                 }
 
                 if ($punchIn && $punchOut) {
@@ -324,7 +324,8 @@ class AttendanceApiController extends ApiController
                 'Full Day' => 1,
                 'Half Day' => 2,
                 'Present' => 3,
-                'Absent' => 4,
+                'Weekly Off' => 4,
+                'Absent' => 5,
             ];
 
             $statusA = $statusOrder[$a['status']] ?? 99;

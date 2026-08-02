@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Project;
+use App\Models\Employee;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -19,31 +20,76 @@ class ProjectApiController extends ApiController
     }
 
     /**
-     * Get eligible project managers and team leads.
+     * Get eligible project managers and team leads code in probim dev
      */
     public function getEligibleManagers(): JsonResponse
     {
-        $allowedRoles = [
-            'Super Admin',
-            'Admin',
-            'Subadmin',
-            'HR Manager',
-            'BIM Manager',
-            'BIM Assistant Manager',
-            'BIM Team Lead',
-            'BIM Coordinator'
-        ];
+        $employees = Employee::whereHas('user', function ($query) {
+            $query->whereIn('type', ['manager', 'hr', 'team_lead']);
+        })
+            ->with('user')
+            ->get()
+            ->map(function ($employee) {
+                return [
+                    'id' => $employee->id,
+                    'user_id' => $employee->user_id,
+                    'employee_id' => $employee->employee_id,
+                    'full_name' => trim($employee->first_name . ' ' . $employee->last_name),
+                    'user_type' => $employee->user?->user_type,
+                ];
+            });
 
-        $employees = \App\Models\Employee::whereHas('user.role', function ($query) use ($allowedRoles) {
-            $query->whereIn('name', $allowedRoles);
-        })->get()->map(function ($employee) {
-            return [
-                'id' => $employee->id,
-                'user_id' => $employee->user_id,
-                'employee_id' => $employee->employee_id,
-                'full_name' => trim($employee->first_name . ' ' . $employee->last_name),
-            ];
-        });
+        return $this->success($employees);
+    }
+
+//code in probim main live
+    // public function getEligibleManagers(): JsonResponse
+    // {
+    //     $allowedRoles = [
+    //         // 'Super Admin',
+    //         'Admin',
+    //         'Subadmin',
+    //         'HR Manager',
+    //         'BIM Manager',
+    //         'BIM Assistant Manager',
+    //         'BIM Team Lead',
+    //     ];
+
+    //     $employees = Employee::whereHas('user.role', function ($query) use ($allowedRoles) {
+    //         $query->whereIn('name', $allowedRoles);
+    //     })
+    //         ->with(['user.role'])
+    //         ->get()
+    //         ->map(function ($employee) {
+    //             return [
+    //                 'id' => $employee->id,
+    //                 'user_id' => $employee->user_id,
+    //                 'employee_id' => $employee->employee_id,
+    //                 'full_name' => trim($employee->first_name . ' ' . $employee->last_name),
+    //                 'role' => $employee->user?->role?->name,
+    //             ];
+    //         });
+
+    //     return $this->success($employees);
+    // }
+
+
+    public function getEligibleTeamLeads(): JsonResponse
+    {
+        $employees = Employee::whereHas('user', function ($query) {
+            $query->whereIn('type', ['hr', 'team_lead', 'manager']);
+        })
+            ->with('user')
+            ->get()
+            ->map(function ($employee) {
+                return [
+                    'id' => $employee->id,
+                    'user_id' => $employee->user_id,
+                    'employee_id' => $employee->employee_id,
+                    'full_name' => trim($employee->first_name . ' ' . $employee->last_name),
+                    'user_type' => $employee->user?->user_type,
+                ];
+            });
 
         return $this->success($employees);
     }

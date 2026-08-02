@@ -34,7 +34,7 @@ class ReportApiController extends ApiController
         $employeeId = $request->get('employee_id');
         $departmentId = $request->get('department_id');
         $search = $request->get('search');
-        $perPage = $request->get('per_page', 500);
+        $perPage = 500;
 
         // Get start and end dates
         [$startDate, $endDate] = $this->getDateRange(
@@ -128,13 +128,28 @@ class ReportApiController extends ApiController
                 $punchIn = $attendance?->punch_in;
                 $punchOut = $attendance?->punch_out;
 
+                $timezone = $attendance?->timezone ?? config('app.timezone');
+
+                $abbr = match ($timezone) {
+                    'Asia/Kolkata',
+                    'Asia/Calcutta',
+                    'IST',
+                    '+05:30',
+                    'UTC+05:30' => 'IST',
+                    'Asia/Dubai',
+                    'GST',
+                    '+04:00',
+                    'UTC+04:00' => 'GST',
+                    default => Carbon::now($timezone)->format('T'),
+                };
+
                 $workedHours = 0;
                 $overtimeMinutes = 0;
 
                 if ($punchIn) {
                     $status = 'Present';
                 } else {
-                    $status = 'Absent';
+                    $status = $currentDate->isSunday() ? 'Weekly Off' : 'Absent';
                 }
 
                 if ($punchIn && $punchOut) {
@@ -170,10 +185,10 @@ class ReportApiController extends ApiController
                     'company' => $employee->user->company->name ?? 'N/A',
                     'date' => $date,
                     'punch_in' => $punchIn
-                        ? Carbon::parse($punchIn)->format('h:i A')
+                        ? Carbon::parse($punchIn)->format('h:i A') . ' ' . $abbr
                         : '-',
                     'punch_out' => $punchOut
-                        ? Carbon::parse($punchOut)->format('h:i A')
+                        ? Carbon::parse($punchOut)->format('h:i A') . ' ' . $abbr
                         : '-',
                     'worked_hours' => $workedHours,
                     'standard_hours' => $standardHours,
@@ -454,9 +469,24 @@ class ReportApiController extends ApiController
                 $punchIn = $attendance?->punch_in;
                 $punchOut = $attendance?->punch_out;
 
+                $timezone = $attendance?->timezone ?? config('app.timezone');
+
+                $abbr = match ($timezone) {
+                    'Asia/Kolkata',
+                    'Asia/Calcutta',
+                    'IST',
+                    '+05:30',
+                    'UTC+05:30' => 'IST',
+                    'Asia/Dubai',
+                    'GST',
+                    '+04:00',
+                    'UTC+04:00' => 'GST',
+                    default => Carbon::now($timezone)->format('T'),
+                };
+
                 $workedHours = 0;
                 $overtimeMinutes = 0;
-                $status = 'Absent';
+                $status = $tempDate->isSunday() ? 'Weekly Off' : 'Absent';
 
                 if ($punchIn) {
                     $status = 'Present';
@@ -484,8 +514,8 @@ class ReportApiController extends ApiController
                     $emp->employee_id,
                     $emp->first_name . ' ' . $emp->last_name,
                     $emp->user->department->name ?? 'N/A',
-                    $punchIn ? Carbon::parse($punchIn)->format('H:i') : '-',
-                    $punchOut ? Carbon::parse($punchOut)->format('H:i') : '-',
+                    $punchIn ? Carbon::parse($punchIn)->format('H:i') . ' ' . $abbr : '-',
+                    $punchOut ? Carbon::parse($punchOut)->format('H:i') . ' ' . $abbr : '-',
                     $workedHours,
                     $standardHours,
                     $this->formatOvertimeMinutes($overtimeMinutes),
@@ -501,11 +531,11 @@ class ReportApiController extends ApiController
             $exportClass = new AttendanceExport($data);
             $filename = "attendance_report_" . now()->format('YmdHis');
             $pdf = Pdf::loadView('reports.attendance_pdf', [
-                'data'     => $exportClass->array(),
+                'data' => $exportClass->array(),
                 'headings' => $exportClass->headings(),
-                'title'    => $exportClass->title(),
-                'period'   => $startDate . ' to ' . $endDate,
-                'summary'  => 'Total Records: ' . $totalRecords,
+                'title' => $exportClass->title(),
+                'period' => $startDate . ' to ' . $endDate,
+                'summary' => 'Total Records: ' . $totalRecords,
             ])->setPaper('a4', 'landscape');
             return $pdf->download($filename . '.pdf');
         }
