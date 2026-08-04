@@ -5,13 +5,17 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Api\ApiController;
 use App\Exports\AttendanceExport;
 use App\Exports\LeaveExport;
+use App\Exports\ProjectReportExport;
 use App\Exports\EmployeeExport;
 use App\Models\AttendanceLog;
+use App\Models\ProjectTimeLog;
+use App\Models\Project;
 use App\Models\Employee;
 use App\Models\LeaveRequest;
 use App\Models\Department;
 use App\Models\Designation;
-use App\Models\Company;
+use App\Models\Organization;
+use App\Models\Document;
 use App\Models\User;
 use App\Models\WorkingHour;
 use Illuminate\Http\Request;
@@ -28,45 +32,246 @@ class ReportApiController extends ApiController
     /**
      * Attendance Report Listing
      */
+    //main
+    // public function attendanceReport(Request $request): JsonResponse
+    // {
+    //     $dateRange = $request->get('date_range', 'today');
+    //     $employeeId = $request->get('employee_id');
+    //     $departmentId = $request->get('department_id');
+    //     $search = $request->get('search');
+    //     $perPage = 500;
+
+    //     // Get start and end dates
+    //     [$startDate, $endDate] = $this->getDateRange(
+    //         $dateRange,
+    //         $request->get('from_date'),
+    //         $request->get('to_date')
+    //     );
+
+    //     // Employees query
+    //     $employeesQuery = Employee::with([
+    //         'user.company',
+    //         'user.department',
+    //         'user.designation'
+    //     ])
+    //         ->whereHas('user', function ($query) {
+    //             $query->where('status', 'active')
+    //                 ->where('type', 'employee');
+    //         });
+
+    //     // Filter by employee ID
+    //     if ($employeeId && $employeeId !== 'all') {
+    //         $employeesQuery->where('user_id', $employeeId);
+    //     }
+
+    //     // Filter by department
+    //     if ($departmentId && $departmentId !== 'all') {
+    //         $employeesQuery->whereHas('user', function ($query) use ($departmentId) {
+    //             $query->where('department_id', $departmentId);
+    //         });
+    //     }
+
+    //     // Search
+    //     if ($search) {
+    //         $employeesQuery->where(function ($query) use ($search) {
+    //             $query->where('first_name', 'like', "%{$search}%")
+    //                 ->orWhere('last_name', 'like', "%{$search}%")
+    //                 ->orWhere('employee_id', 'like', "%{$search}%");
+    //         });
+    //     }
+
+    //     $employees = $employeesQuery->get();
+
+    //     if ($employees->isEmpty()) {
+    //         return $this->success([
+    //             'data' => [],
+    //             'meta' => [
+    //                 'total' => 0,
+    //                 'per_page' => (int) $perPage,
+    //                 'current_page' => 1,
+    //                 'last_page' => 0
+    //             ]
+    //         ]);
+    //     }
+
+    //     $userIds = $employees->pluck('user_id')->toArray();
+
+    //     // Fetch working hour configuration keyed by lowercase day name
+    //     $workingHours = WorkingHour::all()->keyBy(fn($wh) => strtolower($wh->day));
+
+    //     // Attendance logs
+    //     $allLogs = AttendanceLog::whereBetween('log_date', [$startDate, $endDate])
+    //         ->whereIn('userid', $userIds)
+    //         ->orderBy('log_date')
+    //         ->get()
+    //         ->groupBy(['log_date', 'userid']);
+
+    //     $reportData = [];
+
+    //     $currentDate = Carbon::parse($startDate);
+    //     $lastDate = Carbon::parse($endDate);
+
+    //     while ($currentDate->lte($lastDate)) {
+
+    //         $date = $currentDate->toDateString();
+    //         $dayLogs = $allLogs->get($date, collect());
+
+    //         // Determine standard hours for this day from WorkingHour config
+    //         $dayName = strtolower($currentDate->format('l')); // e.g. 'monday'
+    //         $workingHourConfig = $workingHours->get($dayName);
+    //         $standardHours = 8; // default fallback
+    //         if ($workingHourConfig && $workingHourConfig->is_enabled && $workingHourConfig->start_time && $workingHourConfig->end_time) {
+    //             $configStart = Carbon::createFromTimeString($workingHourConfig->start_time);
+    //             $configEnd = Carbon::createFromTimeString($workingHourConfig->end_time);
+    //             $standardHours = round($configStart->diffInMinutes($configEnd) / 60, 2);
+    //         }
+
+    //         foreach ($employees as $employee) {
+
+    //             $attendance = $dayLogs->get($employee->user_id)?->first();
+
+    //             $punchIn = $attendance?->punch_in;
+    //             $punchOut = $attendance?->punch_out;
+
+    //             $timezone = $attendance?->timezone ?? config('app.timezone');
+
+    //             $abbr = match ($timezone) {
+    //                 'Asia/Kolkata',
+    //                 'Asia/Calcutta',
+    //                 'IST',
+    //                 '+05:30',
+    //                 'UTC+05:30' => 'IST',
+    //                 'Asia/Dubai',
+    //                 'GST',
+    //                 '+04:00',
+    //                 'UTC+04:00' => 'GST',
+    //                 default => Carbon::now($timezone)->format('T'),
+    //             };
+
+    //             $workedHours = 0;
+    //             $overtimeMinutes = 0;
+
+    //             if ($punchIn) {
+    //                 $status = 'Present';
+    //             } else {
+    //                 $status = $currentDate->isSunday() ? 'Weekly Off' : 'Absent';
+    //             }
+
+    //             if ($punchIn && $punchOut) {
+
+    //                 $punchInTime = Carbon::parse($punchIn);
+    //                 $punchOutTime = Carbon::parse($punchOut);
+
+    //                 $workedMinutes = $punchInTime->diffInMinutes($punchOutTime);
+    //                 $workedHours = round($workedMinutes / 60, 2);
+
+    //                 if ($workedHours >= 8) {
+
+    //                     $status = 'Full Day';
+
+    //                 } elseif ($workedHours >= 4) {
+
+    //                     $status = 'Half Day';
+
+    //                 } else {
+
+    //                     $status = 'Absent';
+    //                 }
+
+    //                 // Overtime in minutes beyond the standard configured hours
+    //                 $overtimeMinutes = max(0, (int) round(($workedHours - $standardHours) * 60));
+    //             }
+
+    //             $reportData[] = [
+    //                 'employee_id' => $employee->employee_id,
+    //                 'name' => trim($employee->first_name . ' ' . $employee->last_name),
+    //                 'department' => $employee->user->department->name ?? 'N/A',
+    //                 'designation' => $employee->user->designation->name ?? 'N/A',
+    //                 'company' => $employee->user->company->name ?? 'N/A',
+    //                 'date' => $date,
+    //                 'punch_in' => $punchIn
+    //                     ? Carbon::parse($punchIn)->format('h:i A') . ' ' . $abbr
+    //                     : '-',
+    //                 'punch_out' => $punchOut
+    //                     ? Carbon::parse($punchOut)->format('h:i A') . ' ' . $abbr
+    //                     : '-',
+    //                 'worked_hours' => $workedHours,
+    //                 'standard_hours' => $standardHours,
+    //                 'overtime' => $this->formatOvertimeMinutes($overtimeMinutes),
+    //                 'status' => $status,
+    //             ];
+    //         }
+
+    //         $currentDate->addDay();
+    //     }
+
+    //     // Sort by latest date first
+    //     usort($reportData, function ($a, $b) {
+
+    //         if ($a['date'] === $b['date']) {
+    //             return strcmp($a['employee_id'], $b['employee_id']);
+    //         }
+
+    //         return strcmp($b['date'], $a['date']);
+    //     });
+
+    //     // Pagination
+    //     $currentPage = (int) $request->get('page', 1);
+
+    //     $total = count($reportData);
+
+    //     $paginatedItems = array_slice(
+    //         $reportData,
+    //         ($currentPage - 1) * $perPage,
+    //         $perPage
+    //     );
+
+    //     return $this->success([
+    //         'data' => array_values($paginatedItems),
+    //         'meta' => [
+    //             'total' => $total,
+    //             'per_page' => (int) $perPage,
+    //             'current_page' => $currentPage,
+    //             'last_page' => (int) ceil($total / $perPage),
+    //         ]
+    //     ]);
+    // }
+
+    //dev
     public function attendanceReport(Request $request): JsonResponse
     {
         $dateRange = $request->get('date_range', 'today');
         $employeeId = $request->get('employee_id');
         $departmentId = $request->get('department_id');
+        $perPage = $request->get('per_page', 100);
         $search = $request->get('search');
-        $perPage = 500;
 
-        // Get start and end dates
         [$startDate, $endDate] = $this->getDateRange(
             $dateRange,
             $request->get('from_date'),
             $request->get('to_date')
         );
 
-        // Employees query
         $employeesQuery = Employee::with([
-            'user.company',
+            // 'user.company',
             'user.department',
             'user.designation'
         ])
             ->whereHas('user', function ($query) {
                 $query->where('status', 'active')
-                    ->where('type', 'employee');
+                    ->where('type', '!=', 'admin');
             });
 
-        // Filter by employee ID
         if ($employeeId && $employeeId !== 'all') {
             $employeesQuery->where('user_id', $employeeId);
         }
 
-        // Filter by department
         if ($departmentId && $departmentId !== 'all') {
             $employeesQuery->whereHas('user', function ($query) use ($departmentId) {
                 $query->where('department_id', $departmentId);
             });
         }
 
-        // Search
         if ($search) {
             $employeesQuery->where(function ($query) use ($search) {
                 $query->where('first_name', 'like', "%{$search}%")
@@ -82,7 +287,7 @@ class ReportApiController extends ApiController
                 'data' => [],
                 'meta' => [
                     'total' => 0,
-                    'per_page' => (int) $perPage,
+                    'per_page' => $perPage,
                     'current_page' => 1,
                     'last_page' => 0
                 ]
@@ -91,10 +296,8 @@ class ReportApiController extends ApiController
 
         $userIds = $employees->pluck('user_id')->toArray();
 
-        // Fetch working hour configuration keyed by lowercase day name
         $workingHours = WorkingHour::all()->keyBy(fn($wh) => strtolower($wh->day));
 
-        // Attendance logs
         $allLogs = AttendanceLog::whereBetween('log_date', [$startDate, $endDate])
             ->whereIn('userid', $userIds)
             ->orderBy('log_date')
@@ -102,6 +305,19 @@ class ReportApiController extends ApiController
             ->groupBy(['log_date', 'userid']);
 
         $reportData = [];
+
+        foreach ($employees as $employee) {
+
+            $reportData[$employee->user_id] = [
+                'employee_id' => $employee->employee_id,
+                'user_id' => $employee->user_id,
+                'name' => trim($employee->first_name . ' ' . $employee->last_name),
+                'department' => $employee->user->department->name ?? 'N/A',
+                'designation' => $employee->user->designation->name ?? 'N/A',
+                'company' => $employee->user->company->name ?? 'N/A',
+                'attendance' => [],
+            ];
+        }
 
         $currentDate = Carbon::parse($startDate);
         $lastDate = Carbon::parse($endDate);
@@ -111,13 +327,21 @@ class ReportApiController extends ApiController
             $date = $currentDate->toDateString();
             $dayLogs = $allLogs->get($date, collect());
 
-            // Determine standard hours for this day from WorkingHour config
-            $dayName = strtolower($currentDate->format('l')); // e.g. 'monday'
+            $dayName = strtolower($currentDate->format('l'));
+
             $workingHourConfig = $workingHours->get($dayName);
-            $standardHours = 8; // default fallback
-            if ($workingHourConfig && $workingHourConfig->is_enabled && $workingHourConfig->start_time && $workingHourConfig->end_time) {
+
+            $standardHours = 8;
+
+            if (
+                $workingHourConfig &&
+                $workingHourConfig->is_enabled &&
+                $workingHourConfig->start_time &&
+                $workingHourConfig->end_time
+            ) {
                 $configStart = Carbon::createFromTimeString($workingHourConfig->start_time);
                 $configEnd = Carbon::createFromTimeString($workingHourConfig->end_time);
+
                 $standardHours = round($configStart->diffInMinutes($configEnd) / 60, 2);
             }
 
@@ -136,10 +360,12 @@ class ReportApiController extends ApiController
                     'IST',
                     '+05:30',
                     'UTC+05:30' => 'IST',
+
                     'Asia/Dubai',
                     'GST',
                     '+04:00',
                     'UTC+04:00' => 'GST',
+
                     default => Carbon::now($timezone)->format('T'),
                 };
 
@@ -149,7 +375,9 @@ class ReportApiController extends ApiController
                 if ($punchIn) {
                     $status = 'Present';
                 } else {
-                    $status = $currentDate->isSunday() ? 'Weekly Off' : 'Absent';
+                    $status = $currentDate->isSunday()
+                        ? 'Weekly Off'
+                        : 'Absent';
                 }
 
                 if ($punchIn && $punchOut) {
@@ -161,38 +389,37 @@ class ReportApiController extends ApiController
                     $workedHours = round($workedMinutes / 60, 2);
 
                     if ($workedHours >= 8) {
-
                         $status = 'Full Day';
-
                     } elseif ($workedHours >= 4) {
-
                         $status = 'Half Day';
-
                     } else {
-
                         $status = 'Absent';
                     }
 
-                    // Overtime in minutes beyond the standard configured hours
-                    $overtimeMinutes = max(0, (int) round(($workedHours - $standardHours) * 60));
+                    $overtimeMinutes = max(
+                        0,
+                        (int) round(($workedHours - $standardHours) * 60)
+                    );
                 }
 
-                $reportData[] = [
-                    'employee_id' => $employee->employee_id,
-                    'name' => trim($employee->first_name . ' ' . $employee->last_name),
-                    'department' => $employee->user->department->name ?? 'N/A',
-                    'designation' => $employee->user->designation->name ?? 'N/A',
-                    'company' => $employee->user->company->name ?? 'N/A',
+                $reportData[$employee->user_id]['attendance'][] = [
+
                     'date' => $date,
+
                     'punch_in' => $punchIn
                         ? Carbon::parse($punchIn)->format('h:i A') . ' ' . $abbr
                         : '-',
+
                     'punch_out' => $punchOut
                         ? Carbon::parse($punchOut)->format('h:i A') . ' ' . $abbr
                         : '-',
+
                     'worked_hours' => $workedHours,
+
                     'standard_hours' => $standardHours,
+
                     'overtime' => $this->formatOvertimeMinutes($overtimeMinutes),
+
                     'status' => $status,
                 ];
             }
@@ -200,17 +427,13 @@ class ReportApiController extends ApiController
             $currentDate->addDay();
         }
 
-        // Sort by latest date first
+        // Sort employees by Employee ID
         usort($reportData, function ($a, $b) {
-
-            if ($a['date'] === $b['date']) {
-                return strcmp($a['employee_id'], $b['employee_id']);
-            }
-
-            return strcmp($b['date'], $a['date']);
+            return strcmp($a['employee_id'], $b['employee_id']);
         });
 
-        // Pagination
+        $reportData = array_values($reportData);
+
         $currentPage = (int) $request->get('page', 1);
 
         $total = count($reportData);
@@ -222,15 +445,18 @@ class ReportApiController extends ApiController
         );
 
         return $this->success([
-            'data' => array_values($paginatedItems),
+            'data' => $paginatedItems,
             'meta' => [
                 'total' => $total,
-                'per_page' => (int) $perPage,
+                'per_page' => $perPage,
                 'current_page' => $currentPage,
                 'last_page' => (int) ceil($total / $perPage),
             ]
         ]);
     }
+
+    //dev
+
     /**
      * Leave Report Listing
      */
@@ -247,6 +473,9 @@ class ReportApiController extends ApiController
             ->where(function ($q) use ($startDate, $endDate) {
                 $q->whereBetween('start_date', [$startDate, $endDate])
                     ->orWhereBetween('end_date', [$startDate, $endDate]);
+            })
+            ->whereHas('employee.user', function ($q) {
+                $q->whereNull('deleted_at');
             });
 
         if ($employeeId && $employeeId !== 'all') {
@@ -273,27 +502,34 @@ class ReportApiController extends ApiController
     {
         $departmentId = $request->get('department_id');
         $companyId = $request->get('company_id');
+        $status = $request->get('status');
         $perPage = $request->get('per_page', 10);
 
-        $query = Employee::with(['user.department', 'user.designation', 'user.company']);
+        $query = Employee::with([
+            'user.department',
+            'user.designation',
+            'user.company'
+        ])->whereHas('user', function ($q) use ($departmentId, $companyId, $status) {
 
-        if ($departmentId && $departmentId !== 'all') {
-            $query->whereHas('user', function ($q) use ($departmentId) {
+            $q->where('type', '!=', 'admin');
+
+            if ($departmentId && $departmentId !== 'all') {
                 $q->where('department_id', $departmentId);
-            });
-        }
+            }
 
-        if ($companyId && $companyId !== 'all') {
-            $query->whereHas('user', function ($q) use ($companyId) {
+            if ($companyId && $companyId !== 'all') {
                 $q->where('company_id', $companyId);
-            });
-        }
+            }
+
+            if ($status) {
+                $q->where('status', $status);
+            }
+        });
 
         $employees = $query->paginate($perPage);
 
         return $this->success($employees);
     }
-
     /**
      * Employee Details Report
      */
@@ -346,40 +582,48 @@ class ReportApiController extends ApiController
     }
 
     /**
-     * Company Nearest Expiry (within 30 days)
+     * Organization Nearest Expiry – documents expiring within 30 days
      */
     public function companyNearestExpiry(): JsonResponse
     {
         $threshold = Carbon::now()->addDays(30);
-        $companies = Company::where(function ($query) use ($threshold) {
-            $query->whereDate('trade_license_expiry', '<=', $threshold)
-                ->orWhereDate('establishment_card_expiry', '<=', $threshold);
-        })->get();
+
+        $documents = Document::whereNotNull('expiry_date')
+            ->whereDate('expiry_date', '<=', $threshold)
+            ->with('party')
+            ->orderBy('expiry_date')
+            ->get();
+
+        $organizations = Organization::all(['id', 'name']);
 
         return $this->success([
-            'companies' => $companies,
-            'title' => 'Company Nearest Expiry Details',
-            'subtitle' => 'Expiring within 30 days'
+            'documents' => $documents,
+            'organizations' => $organizations,
+            'title' => 'Organization Nearest Expiry Details',
+            'subtitle' => 'Documents expiring within 30 days',
         ]);
     }
 
     /**
-     * Company Upcoming Renewals (31-90 days)
+     * Organization / Company Upcoming Renewals – documents expiring in 31-90 days
      */
     public function companyUpcomingRenewals(): JsonResponse
     {
         $start = Carbon::now()->addDays(31);
         $end = Carbon::now()->addDays(90);
 
-        $companies = Company::where(function ($query) use ($start, $end) {
-            $query->whereBetween('trade_license_expiry', [$start, $end])
-                ->orWhereBetween('establishment_card_expiry', [$start, $end]);
-        })->get();
+        $documents = Document::whereNotNull('expiry_date')
+            ->whereBetween('expiry_date', [$start, $end])
+            ->with('party')
+            ->get();
+
+        $organizations = Organization::all();
 
         return $this->success([
-            'companies' => $companies,
-            'title' => 'Company Upcoming Renewals',
-            'subtitle' => 'Expiring within 31-90 days'
+            'documents' => $documents,
+            'organizations' => $organizations,
+            'title' => 'Organization Upcoming Renewals',
+            'subtitle' => 'Documents expiring within 31-90 days'
         ]);
     }
 
@@ -390,12 +634,514 @@ class ReportApiController extends ApiController
     {
         $leaves = LeaveRequest::with(['employee', 'leaveType'])
             ->where('status', 'pending')
+            ->whereHas('employee.user', function ($q) {
+                $q->whereNull('deleted_at');
+            })
             ->orderBy('created_at', 'desc')
             ->get();
 
         return $this->success([
             'leaves' => $leaves,
             'title' => 'Employees Pending Leave Reports'
+        ]);
+    }
+
+    /**
+     * Project Report Listing
+     */
+    public function projectReport(Request $request): JsonResponse
+    {
+        $dateRange = $request->get('date_range', 'this_month');
+        $projectId = $request->get('project_id');
+        $search = $request->get('search');
+
+        list($startDate, $endDate) = $this->getDateRange($dateRange, $request->get('from_date'), $request->get('to_date'));
+
+        $projectsQuery = Project::query();
+
+        if ($projectId && $projectId !== 'all') {
+            $projectsQuery->where('id', $projectId);
+        }
+
+        if ($search) {
+            $projectsQuery->where('name', 'like', "%{$search}%");
+        }
+
+        $projects = $projectsQuery->get();
+
+        $reportData = [];
+
+        // Build list of dates in the range
+        $dates = [];
+        $tempDate = Carbon::parse($startDate);
+        $end = Carbon::parse($endDate);
+        while ($tempDate <= $end) {
+            $dates[] = $tempDate->toDateString();
+            $tempDate->addDay();
+        }
+
+        foreach ($projects as $project) {
+            // Get all time logs for this project in date range
+            $logs = ProjectTimeLog::where('project_id', $project->id)
+                ->whereBetween('date', [$startDate, $endDate])
+                ->with([
+                    'user.employee' => function ($query) {
+                        $query->withTrashed();
+                    }
+                ])
+                ->get();
+
+            // Group logs by user
+            $logsByUser = $logs->groupBy('user_id');
+
+            $employeesList = [];
+            $totalProjectMinutes = 0;
+
+            foreach ($logsByUser as $userId => $userLogs) {
+                $user = $userLogs->first()->user;
+                $employee = $user?->employee;
+
+                $dailyBreakdown = [];
+                $employeeTotalMinutes = 0;
+
+                // For each day in the date range, calculate hours worked
+                foreach ($dates as $date) {
+                    $dayMinutes = $userLogs->where('date', $date)->sum('time_taken_minutes');
+                    $dailyBreakdown[$date] = round($dayMinutes / 60, 2);
+                    $employeeTotalMinutes += $dayMinutes;
+                }
+
+                $totalProjectMinutes += $employeeTotalMinutes;
+
+                $employeesList[] = [
+                    'id' => $employee?->id,
+                    'user_id' => $userId,
+                    'employee_id' => $employee?->employee_id ?? 'N/A',
+                    'name' => $employee ? trim($employee->first_name . ' ' . $employee->last_name) : ($user ? trim($user->first_name . ' ' . $user->last_name) : 'Unknown'),
+                    'daily_breakdown' => $dailyBreakdown,
+                    'total_employee_hours' => round($employeeTotalMinutes / 60, 2),
+                ];
+            }
+
+            $reportData[] = [
+                'id' => $project->id,
+                'name' => $project->name,
+                'status' => $project->status ?? 'active',
+                'total_hours' => round($totalProjectMinutes / 60, 2),
+                'employee_count' => count($employeesList),
+                'employees' => $employeesList,
+            ];
+        }
+
+        return $this->success($reportData);
+    }
+
+    public function projectExport(Request $request)
+    {
+        $this->authenticateFromToken($request);
+        $dateRange = $request->get('date_range', 'this_month');
+        $projectId = $request->get('project_id');
+        $search = $request->get('search');
+
+        list($startDate, $endDate) = $this->getDateRange($dateRange, $request->get('from_date'), $request->get('to_date'));
+
+        $projectsQuery = Project::query();
+
+        if ($projectId && $projectId !== 'all') {
+            $projectsQuery->where('id', $projectId);
+        }
+
+        if ($search) {
+            $projectsQuery->where('name', 'like', "%{$search}%");
+        }
+
+        $projects = $projectsQuery->get();
+
+        // Build list of dates in the range
+        $dates = [];
+        $tempDate = Carbon::parse($startDate);
+        $end = Carbon::parse($endDate);
+        while ($tempDate <= $end) {
+            $dates[] = $tempDate->toDateString();
+            $tempDate->addDay();
+        }
+
+        $data = [];
+
+        foreach ($projects as $project) {
+            // Get logs
+            $logs = ProjectTimeLog::where('project_id', $project->id)
+                ->whereBetween('date', [$startDate, $endDate])
+                ->with([
+                    'user.employee' => function ($query) {
+                        $query->withTrashed();
+                    }
+                ])
+                ->get();
+
+            $logsByUser = $logs->groupBy('user_id');
+
+            $totalProjectMinutes = 0;
+            $projectRows = [];
+            $uniqueEmployeesCount = count($logsByUser);
+
+            foreach ($logsByUser as $userId => $userLogs) {
+                $user = $userLogs->first()->user;
+                $employee = $user?->employee;
+                $empName = $employee ? trim($employee->first_name . ' ' . $employee->last_name) : ($user ? trim($user->first_name . ' ' . $user->last_name) : 'Unknown');
+                $empId = $employee?->employee_id ?? 'N/A';
+
+                $employeeTotalMinutes = 0;
+                $employeeRows = [];
+
+                foreach ($dates as $date) {
+                    $dayMinutes = $userLogs->where('date', $date)->sum('time_taken_minutes');
+                    if ($dayMinutes > 0) {
+                        $hours = round($dayMinutes / 60, 2);
+                        $employeeTotalMinutes += $dayMinutes;
+                        $employeeRows[] = [
+                            'emp_id' => $empId,
+                            'emp_name' => $empName,
+                            'date' => $date,
+                            'hours' => $hours
+                        ];
+                    }
+                }
+
+                $totalProjectMinutes += $employeeTotalMinutes;
+
+                foreach ($employeeRows as $row) {
+                    $projectRows[] = [
+                        'emp_id' => $row['emp_id'],
+                        'emp_name' => $row['emp_name'],
+                        'emp_total_hours' => round($employeeTotalMinutes / 60, 2),
+                        'date' => $row['date'],
+                        'hours' => $row['hours']
+                    ];
+                }
+            }
+
+            $totalProjectHours = round($totalProjectMinutes / 60, 2);
+
+            foreach ($projectRows as $row) {
+                $data[] = [
+                    $project->id,
+                    $project->name,
+                    ucfirst($project->status ?? 'active'),
+                    $totalProjectHours,
+                    $uniqueEmployeesCount,
+                    $row['emp_id'],
+                    $row['emp_name'],
+                    $row['emp_total_hours'],
+                    $row['date'],
+                    $row['hours']
+                ];
+            }
+
+            // If a project has no hours logged, we can still list it once
+            if (empty($projectRows)) {
+                $data[] = [
+                    $project->id,
+                    $project->name,
+                    ucfirst($project->status ?? 'active'),
+                    0,
+                    0,
+                    'N/A',
+                    'N/A',
+                    0,
+                    '-',
+                    0
+                ];
+            }
+        }
+
+        if (strtolower($request->get('format', '')) === 'pdf') {
+            $exportClass = new ProjectReportExport($data);
+            $filename = "project_report_" . now()->format('YmdHis');
+            $pdf = Pdf::loadView('reports.generic_pdf', [
+                'data' => $exportClass->array(),
+                'headings' => $exportClass->headings(),
+                'title' => $exportClass->title(),
+            ])->setPaper('a4', 'landscape');
+            return $pdf->download($filename . '.pdf');
+        }
+
+        return $this->downloadResponse(new ProjectReportExport($data), "project_report", $request->get('format'));
+    }
+
+    public function employeeNearestExpiryExport(Request $request)
+    {
+        $this->authenticateFromToken($request);
+        $threshold = Carbon::now()->addDays(30);
+        $employees = Employee::where(function ($query) use ($threshold) {
+            $query->whereDate('passport_expiry_date', '<=', $threshold)
+                ->orWhereDate('visa_expiry_date', '<=', $threshold)
+                ->orWhereDate('labor_expiry_date', '<=', $threshold)
+                ->orWhereDate('eid_expiry_date', '<=', $threshold);
+        })->get();
+
+        $data = [];
+        $columns = ['Employee ID', 'Name', 'Passport Expiry', 'Visa Expiry', 'Labor Expiry', 'EID Expiry'];
+        foreach ($employees as $emp) {
+            $data[] = [
+                $emp->employee_id,
+                trim($emp->first_name . ' ' . $emp->last_name),
+                $emp->passport_expiry_date ?? 'N/A',
+                $emp->visa_expiry_date ?? 'N/A',
+                $emp->labor_expiry_date ?? 'N/A',
+                $emp->eid_expiry_date ?? 'N/A',
+            ];
+        }
+
+        return $this->downloadResponse(new \App\Exports\GenericExport($data, $columns), "employee_nearest_expiry", $request->get('format'));
+    }
+
+    public function employeeUpcomingRenewalsExport(Request $request)
+    {
+        $this->authenticateFromToken($request);
+        $start = Carbon::now()->addDays(31);
+        $end = Carbon::now()->addDays(90);
+
+        $employees = Employee::where(function ($query) use ($start, $end) {
+            $query->whereBetween('passport_expiry_date', [$start, $end])
+                ->orWhereBetween('visa_expiry_date', [$start, $end])
+                ->orWhereBetween('labor_expiry_date', [$start, $end])
+                ->orWhereBetween('eid_expiry_date', [$start, $end]);
+        })->get();
+
+        $data = [];
+        $columns = ['Employee ID', 'Name', 'Passport Expiry', 'Visa Expiry', 'Labor Expiry', 'EID Expiry'];
+        foreach ($employees as $emp) {
+            $data[] = [
+                $emp->employee_id,
+                trim($emp->first_name . ' ' . $emp->last_name),
+                $emp->passport_expiry_date ?? 'N/A',
+                $emp->visa_expiry_date ?? 'N/A',
+                $emp->labor_expiry_date ?? 'N/A',
+                $emp->eid_expiry_date ?? 'N/A',
+            ];
+        }
+
+        return $this->downloadResponse(new \App\Exports\GenericExport($data, $columns), "employee_upcoming_renewals", $request->get('format'));
+    }
+
+    public function companyNearestExpiryExport(Request $request)
+    {
+        $this->authenticateFromToken($request);
+        $threshold = Carbon::now()->addDays(30);
+
+        $documents = Document::whereNotNull('expiry_date')
+            ->whereDate('expiry_date', '<=', $threshold)
+            ->with('party')
+            ->get();
+
+        $data = [];
+        $columns = ['Document Name', 'Type', 'Party', 'Expiry Date'];
+        foreach ($documents as $doc) {
+            $data[] = [
+                $doc->name,
+                ucfirst($doc->type),
+                $doc->party->name ?? 'N/A',
+                $doc->expiry_date ?? 'N/A',
+            ];
+        }
+
+        return $this->downloadResponse(new \App\Exports\GenericExport($data, $columns), "organization_nearest_expiry", $request->get('format'));
+    }
+
+    public function companyUpcomingRenewalsExport(Request $request)
+    {
+        $this->authenticateFromToken($request);
+        $start = Carbon::now()->addDays(31);
+        $end = Carbon::now()->addDays(90);
+
+        $documents = Document::whereNotNull('expiry_date')
+            ->whereBetween('expiry_date', [$start, $end])
+            ->with('party')
+            ->get();
+
+        $data = [];
+        $columns = ['Document Name', 'Type', 'Party', 'Expiry Date'];
+        foreach ($documents as $doc) {
+            $data[] = [
+                $doc->name,
+                ucfirst($doc->type),
+                $doc->party->name ?? 'N/A',
+                $doc->expiry_date ?? 'N/A',
+            ];
+        }
+
+        return $this->downloadResponse(new \App\Exports\GenericExport($data, $columns), "organization_upcoming_renewals", $request->get('format'));
+    }
+
+    public function pendingLeavesExport(Request $request)
+    {
+        $this->authenticateFromToken($request);
+        $leaves = LeaveRequest::with(['employee', 'leaveType'])
+            ->where('status', 'pending')
+            ->whereHas('employee.user', function ($q) {
+                $q->whereNull('deleted_at');
+            })
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        $data = [];
+        $columns = ['Employee ID', 'Employee Name', 'Leave Type', 'Start Date', 'End Date', 'Duration (Days)', 'Reason'];
+        foreach ($leaves as $leave) {
+            $data[] = [
+                $leave->employee->employee_id ?? 'N/A',
+                $leave->employee ? trim($leave->employee->first_name . ' ' . $leave->employee->last_name) : 'N/A',
+                $leave->leaveType->name ?? 'N/A',
+                $leave->start_date ? Carbon::parse($leave->start_date)->toDateString() : 'N/A',
+                $leave->end_date ? Carbon::parse($leave->end_date)->toDateString() : 'N/A',
+                $leave->duration_days,
+                $leave->reason ?? 'N/A'
+            ];
+        }
+
+        return $this->downloadResponse(new \App\Exports\GenericExport($data, $columns), "pending_leaves", $request->get('format'));
+    }
+
+    /**
+     * Report Counts – returns record count for every report card in one call.
+     *
+     * Accepts optional date filter params (same as attendanceReport / leaveReport):
+     *   date_range, from_date, to_date
+     */
+    public function reportCounts(Request $request): JsonResponse
+    {
+        $dateRange = $request->get('date_range', 'this_month');
+        [$startDate, $endDate] = $this->getDateRange(
+            $dateRange,
+            $request->get('from_date'),
+            $request->get('to_date')
+        );
+
+        // -- Attendance: unique employees who have at least one log in the period --
+        $attendanceCount = AttendanceLog::distinct('userid')
+            ->count('userid');
+
+        // -- Leave requests that overlap the period --
+        $leaveCount = LeaveRequest::where(function ($q) use ($startDate, $endDate) {
+            $q->whereBetween('start_date', [$startDate, $endDate])
+                ->orWhereBetween('end_date', [$startDate, $endDate]);
+        })
+            ->whereHas('employee.user', function ($q) {
+                $q->whereNull('deleted_at');
+            })->count();
+
+        // -- Active employees --
+        $employeeCount = Employee::whereHas('user', function ($q) {
+            $q->where('status', 'active')->where('type', '!=', 'admin');
+        })->count();
+
+        // -- Task reports in the period --
+        $taskReportCount = TaskReport::count();
+
+        // -- Projects (all active) --
+        $projectCount = Project::count();
+
+        // -- Projects with at least one time-log in the period --
+        $projectWithLogsCount = Project::whereHas('timeLogs')->count();
+
+        // -- Documents expiring within 30 days (employees) --
+        $expiryThreshold30 = Carbon::now()->addDays(30);
+        $employeeNearestExpiryCount = Employee::where(function ($q) use ($expiryThreshold30) {
+            $q->whereDate('passport_expiry_date', '<=', $expiryThreshold30)
+                ->orWhereDate('visa_expiry_date', '<=', $expiryThreshold30)
+                ->orWhereDate('labor_expiry_date', '<=', $expiryThreshold30)
+                ->orWhereDate('eid_expiry_date', '<=', $expiryThreshold30);
+        })->count();
+
+        // -- Documents expiring 31-90 days (employees) --
+        $renewalStart = Carbon::now()->addDays(31);
+        $renewalEnd = Carbon::now()->addDays(90);
+        $employeeUpcomingRenewalsCount = Employee::where(function ($q) use ($renewalStart, $renewalEnd) {
+            $q->whereBetween('passport_expiry_date', [$renewalStart, $renewalEnd])
+                ->orWhereBetween('visa_expiry_date', [$renewalStart, $renewalEnd])
+                ->orWhereBetween('labor_expiry_date', [$renewalStart, $renewalEnd])
+                ->orWhereBetween('eid_expiry_date', [$renewalStart, $renewalEnd]);
+        })->count();
+
+        // -- Organization/document records expiring within 30 days --
+        $companyNearestExpiryCount = Document::whereNotNull('expiry_date')
+            ->whereDate('expiry_date', '<=', $expiryThreshold30)
+            ->count();
+
+        // -- Organization/document records expiring 31-90 days --
+        $companyUpcomingRenewalsCount = Document::whereNotNull('expiry_date')
+            ->whereBetween('expiry_date', [$renewalStart, $renewalEnd])
+            ->count();
+
+        // -- Pending leave requests (active users only) --
+        $pendingLeavesCount = LeaveRequest::where('status', 'pending')
+            ->whereHas('employee.user', function ($q) {
+                $q->whereNull('deleted_at');
+            })->count();
+
+        return $this->success([
+            'period' => [
+                'date_range' => $dateRange,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+            ],
+            'counts' => [
+                [
+                    'key' => 'attendance',
+                    'label' => 'Attendance',
+                    'count' => $attendanceCount,
+                ],
+                [
+                    'key' => 'leave',
+                    'label' => 'Leave Requests',
+                    'count' => $leaveCount,
+                ],
+                [
+                    'key' => 'employee',
+                    'label' => 'Active Employees',
+                    'count' => $employeeCount,
+                ],
+                [
+                    'key' => 'task_report',
+                    'label' => 'Task Reports',
+                    'count' => $taskReportCount,
+                ],
+                [
+                    'key' => 'project',
+                    'label' => 'Projects',
+                    'count' => $projectCount,
+                ],
+                [
+                    'key' => 'project_active',
+                    'label' => 'Projects (Active This Period)',
+                    'count' => $projectWithLogsCount,
+                ],
+                [
+                    'key' => 'employee_nearest_expiry',
+                    'label' => 'Employee Documents Expiring (≤30 days)',
+                    'count' => $employeeNearestExpiryCount,
+                ],
+                [
+                    'key' => 'employee_upcoming_renewals',
+                    'label' => 'Employee Documents Renewing (31–90 days)',
+                    'count' => $employeeUpcomingRenewalsCount,
+                ],
+                [
+                    'key' => 'company_nearest_expiry',
+                    'label' => 'Company Documents Expiring (≤30 days)',
+                    'count' => $companyNearestExpiryCount,
+                ],
+                [
+                    'key' => 'company_upcoming_renewals',
+                    'label' => 'Company Documents Renewing (31–90 days)',
+                    'count' => $companyUpcomingRenewalsCount,
+                ],
+                [
+                    'key' => 'pending_leaves',
+                    'label' => 'Pending Leave Requests',
+                    'count' => $pendingLeavesCount,
+                ],
+            ],
         ]);
     }
 
@@ -416,6 +1162,12 @@ class ReportApiController extends ApiController
             'leave' => $this->leaveExport($request),
             'employee' => $this->employeeExport($request),
             'task_report' => $this->taskReportExport($request),
+            'project' => $this->projectExport($request),
+            'employee_nearest_expiry' => $this->employeeNearestExpiryExport($request),
+            'employee_upcoming_renewals' => $this->employeeUpcomingRenewalsExport($request),
+            'company_nearest_expiry' => $this->companyNearestExpiryExport($request),
+            'company_upcoming_renewals' => $this->companyUpcomingRenewalsExport($request),
+            'pending_leaves' => $this->pendingLeavesExport($request),
             default => $this->error('Invalid report type', 400),
         };
     }
@@ -555,6 +1307,9 @@ class ReportApiController extends ApiController
         $query = LeaveRequest::with(['employee.user', 'leaveType'])
             ->where(function ($q) use ($startDate, $endDate) {
                 $q->whereBetween('start_date', [$startDate, $endDate])->orWhereBetween('end_date', [$startDate, $endDate]);
+            })
+            ->whereHas('employee.user', function ($q) {
+                $q->whereNull('deleted_at');
             });
 
         if ($employeeId && $employeeId !== 'all')
@@ -576,7 +1331,7 @@ class ReportApiController extends ApiController
         $departmentId = $request->get('department_id');
         $companyId = $request->get('company_id');
 
-        $query = Employee::with(['user.company', 'user.department', 'user.designation'])->whereRelation('user', 'status', 'active');
+        $query = Employee::with(['user.company', 'user.department', 'user.designation'])->whereRelation('user', 'status', 'active')->whereRelation('user', 'type', '!=', 'admin');
         if ($departmentId && $departmentId !== 'all')
             $query->whereRelation('user', 'department_id', $departmentId);
         if ($companyId && $companyId !== 'all')
@@ -584,7 +1339,7 @@ class ReportApiController extends ApiController
 
         $data = [];
         foreach ($query->get() as $emp) {
-            $data[] = [$emp->employee_id, $emp->first_name . ' ' . $emp->last_name, $emp->user->company->name ?? 'N/A', $emp->user->department->name ?? 'N/A', $emp->user->designation->name ?? 'N/A', $emp->joining_date, ucfirst($emp->user->status)];
+            $data[] = [$emp->employee_id, $emp->first_name, $emp->user->department->name ?? 'N/A', $emp->user->designation->name ?? 'N/A', $emp->joining_date, ucfirst($emp->user->status)];
         }
 
         return $this->downloadResponse(new EmployeeExport($data), "employee_report", $request->get('format'));
@@ -649,7 +1404,7 @@ class ReportApiController extends ApiController
                 'data' => $data,
                 'headings' => $headings,
                 'title' => $title
-            ]);
+            ])->setPaper('a4', 'landscape');
 
             return $pdf->download($filename . '.pdf');
         }

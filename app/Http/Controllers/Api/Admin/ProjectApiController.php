@@ -15,7 +15,17 @@ class ProjectApiController extends ApiController
      */
     public function index(): JsonResponse
     {
-        $projects = Project::latest()->get();
+        $query = Project::query();
+        $user = auth()->user();
+
+        if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
+            $query->where(function ($q) use ($user) {
+                $q->where('project_manager_id', $user->id)
+                  ->orWhere('team_lead_id', $user->id);
+            });
+        }
+
+        $projects = $query->latest()->get();
         return $this->success($projects);
     }
 

@@ -156,6 +156,23 @@ class AttendanceApiController extends ApiController
                     ->where('type', 'employee');
             });
 
+        // If the logged-in user is a manager or team lead,
+        // restrict to employees assigned to their projects.
+        $authUser = auth()->user();
+        if ($authUser && ($authUser->type === 'manager' || $authUser->type === 'team_lead')) {
+            $employeesQuery->whereIn('user_id', function ($q) use ($authUser) {
+                $q->select('employee_id')
+                    ->from('employee_project')
+                    ->whereIn('project_id', function ($sub) use ($authUser) {
+                        $sub->select('id')
+                            ->from('projects')
+                            ->where('project_manager_id', $authUser->id)
+                            ->orWhere('team_lead_id', $authUser->id);
+                    })
+                    ->whereNull('deleted_at');
+            });
+        }
+
         // Filter by employee ID
         if ($employeeId && $employeeId !== 'all') {
             $employeesQuery->where('employee_id', $employeeId);

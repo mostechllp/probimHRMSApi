@@ -22,10 +22,30 @@ class ProjectAssignmentApiController extends ApiController
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Employee::with(['projects.projectManager', 'projects.teamLead']);
+        $user = auth()->user();
+        $isManagerOrLead = $user && ($user->type === 'manager' || $user->type === 'team_lead');
+
+        $query = Employee::with([
+            'projects' => function ($q) use ($user, $isManagerOrLead) {
+                $q->with(['projectManager', 'teamLead']);
+                if ($isManagerOrLead) {
+                    $q->where(function ($sub) use ($user) {
+                        $sub->where('project_manager_id', $user->id)
+                            ->orWhere('team_lead_id', $user->id);
+                    });
+                }
+            }
+        ]);
 
         if ($request->filled('employee_id')) {
             $query->where('id', $request->employee_id);
+        }
+
+        if ($isManagerOrLead) {
+            $query->whereHas('projects', function ($q) use ($user) {
+                $q->where('project_manager_id', $user->id)
+                  ->orWhere('team_lead_id', $user->id);
+            });
         }
 
         $employees = $query->get();
@@ -37,7 +57,22 @@ class ProjectAssignmentApiController extends ApiController
      */
     public function show($id): JsonResponse
     {
-        $employee = Employee::with('projects')->find($id);
+        $user = auth()->user();
+        $isManagerOrLead = $user && ($user->type === 'manager' || $user->type === 'team_lead');
+
+        $employeeQuery = Employee::query();
+        if ($isManagerOrLead) {
+            $employeeQuery->with(['projects' => function ($q) use ($user) {
+                $q->where(function ($sub) use ($user) {
+                    $sub->where('project_manager_id', $user->id)
+                        ->orWhere('team_lead_id', $user->id);
+                });
+            }]);
+        } else {
+            $employeeQuery->with('projects');
+        }
+
+        $employee = $employeeQuery->find($id);
 
         if (!$employee) {
             return $this->error('Employee not found', 404);
@@ -272,6 +307,14 @@ class ProjectAssignmentApiController extends ApiController
             },
         ])
             ->whereBetween('date', [$startDate, $endDate]);
+
+        $user = auth()->user();
+        if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
+            $logsQuery->whereHas('project', function ($q) use ($user) {
+                $q->where('project_manager_id', $user->id)
+                  ->orWhere('team_lead_id', $user->id);
+            });
+        }
 
         if ($projectId) {
             $logsQuery->where('project_id', $projectId);

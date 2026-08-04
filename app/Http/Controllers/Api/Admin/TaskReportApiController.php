@@ -24,6 +24,23 @@ class TaskReportApiController extends ApiController
 
         $query = TaskReport::with(['employee.user.company', 'employee.user.department', 'employee.user.designation']);
 
+        $user = auth()->user();
+        if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
+            $employeeIds = \App\Models\Employee::whereIn('user_id', function ($q) use ($user) {
+                $q->select('employee_id')
+                    ->from('employee_project')
+                    ->whereIn('project_id', function ($subQuery) use ($user) {
+                        $subQuery->select('id')
+                            ->from('projects')
+                            ->where('project_manager_id', $user->id)
+                            ->orWhere('team_lead_id', $user->id);
+                    })
+                    ->whereNull('deleted_at');
+            })->pluck('id');
+
+            $query->whereIn('employee_id', $employeeIds);
+        }
+
         if ($employeeId && $employeeId !== 'all') {
             $query->where('employee_id', $employeeId);
         }

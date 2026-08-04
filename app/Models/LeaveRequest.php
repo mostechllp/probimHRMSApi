@@ -48,4 +48,9 @@ class LeaveRequest extends Model
     {
         return $this->belongsTo(User::class, 'applied_by');
     }
+
+    public function approvals()
+    {
+        return $this->hasMany(LeaveApproval::class)->with('approver.employee:id,user_id,first_name,last_name')->orderBy('created_at');
+    }
 }

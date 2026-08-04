@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Employee;
 use App\Models\LeaveAllocation;
+use App\Models\LeaveApproval;
 use App\Models\LeaveRequest;
 use App\Models\LeaveType;
 use Carbon\Carbon;
@@ -23,11 +24,33 @@ class LeaveApiController extends ApiController
             'employee.user',
             'leaveType',
             'approver.employee:id,user_id,first_name,last_name',
-            'approver.role:id,name'
-        ])->latest();
+            'approver.role:id,name',
+            'approvals.approver.employee:id,user_id,first_name,last_name',
+        ])
+            ->whereHas('employee.user', function ($q) {
+                $q->whereNull('deleted_at');
+            })
+            ->latest();
 
         if ($status) {
             $query->where('status', $status);
+        }
+
+        $user = auth()->user();
+        if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
+            $employeeIds = Employee::whereIn('user_id', function ($q) use ($user) {
+                $q->select('employee_id')
+                    ->from('employee_project')
+                    ->whereIn('project_id', function ($subQuery) use ($user) {
+                        $subQuery->select('id')
+                            ->from('projects')
+                            ->where('project_manager_id', $user->id)
+                            ->orWhere('team_lead_id', $user->id);
+                    })
+                    ->whereNull('deleted_at');
+            })->pluck('id');
+
+            $query->whereIn('employee_id', $employeeIds);
         }
 
         if ($employee_id) {
@@ -58,8 +81,14 @@ class LeaveApiController extends ApiController
 
     public function show(LeaveRequest $leaveRequest): JsonResponse
     {
-        $leaveRequest->load(['employee.user', 'leaveType', 'approver.employee:id,user_id,first_name,last_name',
-            'approver.role:id,name', 'appliedBy']);
+        $leaveRequest->load([
+            'employee.user',
+            'leaveType',
+            'approver.employee:id,user_id,first_name,last_name',
+            'approver.role:id,name',
+            'appliedBy',
+            'approvals.approver.employee:id,user_id,first_name,last_name',
+        ]);
 
         $leaveRequest->applied_by = [
             'user_id' => $leaveRequest->appliedBy?->id,
@@ -72,6 +101,8 @@ class LeaveApiController extends ApiController
         if (!empty($leaveRequest->document)) {
             $leaveRequest->document = asset('storage/' . ltrim($leaveRequest->document, '/'));
         }
+
+        $leaveRequest->approval_trail = $this->formatApprovalTrail($leaveRequest->approvals);
 
         return $this->success($leaveRequest);
     }
@@ -317,21 +348,93 @@ class LeaveApiController extends ApiController
         return $this->success(null, 'Leave request deleted successfully.');
     }
 
+    /**
+     * Update leave status with three-level approval.
+     *
+     * - team_lead / manager : logs a row in leave_approvals; does NOT change leave_requests.status.
+     * - hr / admin (any other type) : writes the final status to leave_requests; this is the binding decision.
+     *
+     * The API response shape is unchanged (returns the refreshed LeaveRequest with its relations).
+     */
     public function updateStatus(Request $request, LeaveRequest $leaveRequest): JsonResponse
     {
         $request->validate([
-            'status' => 'required|in:approved,rejected',
-            'admin_remark' => 'nullable|string'
+            'status'       => 'required|in:approved,rejected',
+            'remarks' => 'required|string',
         ]);
 
-        $leaveRequest->update([
-            'status' => $request->status,
-            'admin_remark' => $request->admin_remark,
-            'approved_by' => auth('api')->id()
-        ]);
+        $authUser = auth('api')->user();
+        $approverType = $authUser?->type; // e.g. 'team_lead', 'manager', 'hr', 'admin'
 
-        return $this->success($leaveRequest->load(['employee.user', 'leaveType', 'approver.employee:id,user_id,first_name,last_name',
-            'approver.role:id,name']), "Leave request {$request->status} successfully.");
+        // Determine which level this approver belongs to
+        $isTeamLeadOrManager = in_array($approverType, ['team_lead', 'manager']);
+
+        if ($isTeamLeadOrManager) {
+            // Record the team lead / manager decision in the approvals trail
+            // but do NOT change the main leave_requests.status (HR is final)
+            LeaveApproval::updateOrCreate(
+                [
+                    'leave_request_id' => $leaveRequest->id,
+                    'approver_id'      => $authUser->id,
+                ],
+                [
+                    'approver_level' => $approverType, // 'team_lead' or 'manager'
+                    'status'         => $request->status,
+                    'remark'         => $request->remarks,
+                ]
+            );
+        } else {
+            // HR / admin — final binding decision
+            // Record in the approvals trail as 'hr'
+            LeaveApproval::updateOrCreate(
+                [
+                    'leave_request_id' => $leaveRequest->id,
+                    'approver_id'      => $authUser->id,
+                ],
+                [
+                    'approver_level' => 'hr',
+                    'status'         => $request->status,
+                    'remark'         => $request->remarks,
+                ]
+            );
+
+            // Update the leave request itself
+            $leaveRequest->update([
+                'status'       => $request->status,
+                'admin_remark' => $request->remarks,
+                'approved_by'  => $authUser->id,
+            ]);
+        }
+
+        // Reload with same relations as before — response shape unchanged
+        return $this->success(
+            $leaveRequest->load([
+                'employee.user',
+                'leaveType',
+                'approver.employee:id,user_id,first_name,last_name',
+                'approver.role:id,name',
+            ]),
+            "Leave request {$request->status} successfully."
+        );
+    }
+
+    /**
+     * Format the approvals collection into a clean trail array.
+     */
+    private function formatApprovalTrail($approvals): array
+    {
+        return $approvals->map(function (LeaveApproval $approval) {
+            $emp = $approval->approver?->employee;
+            return [
+                'id'             => $approval->id,
+                'approver_id'    => $approval->approver_id,
+                'approver_name'  => $emp ? trim($emp->first_name . ' ' . $emp->last_name) : ($approval->approver?->name ?? 'N/A'),
+                'approver_level' => $approval->approver_level, // 'team_lead' | 'manager' | 'hr'
+                'status'         => $approval->status,
+                'remark'         => $approval->remark,
+                'actioned_at'    => $approval->updated_at?->toDateTimeString(),
+            ];
+        })->toArray();
     }
 
     private function parseMultipartPut(Request $request): void

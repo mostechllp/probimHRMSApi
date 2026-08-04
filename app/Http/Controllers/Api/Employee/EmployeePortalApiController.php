@@ -12,6 +12,8 @@ use App\Models\WfhRequest;
 use App\Models\LeaveRequest;
 use App\Models\LeaveType;
 use App\Models\LeaveAllocation;
+use App\Models\Payroll;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -421,8 +423,12 @@ class EmployeePortalApiController extends ApiController
         if (!$employee)
             return $this->error('Employee profile not found', 404);
 
-        $leaves = LeaveRequest::with('leaveType', 'appliedBy', 'approver.employee:id,user_id,first_name,last_name',
-            'approver.role:id,name')->where('employee_id', $employee->id)->latest()->get();
+        $leaves = LeaveRequest::with(
+            'leaveType',
+            'appliedBy',
+            'approver.employee:id,user_id,first_name,last_name',
+            'approver.role:id,name'
+        )->where('employee_id', $employee->id)->latest()->get();
         $leaves->transform(function ($leave) {
 
             $leave->applied_by = [
@@ -611,8 +617,12 @@ class EmployeePortalApiController extends ApiController
         if (!$employee)
             return $this->error('Employee profile not found', 404);
 
-        $leave = LeaveRequest::with(['leaveType', 'appliedBy', 'approver.employee:id,user_id,first_name,last_name',
-            'approver.role:id,name'])->where('employee_id', $employee->id)->find($id);
+        $leave = LeaveRequest::with([
+            'leaveType',
+            'appliedBy',
+            'approver.employee:id,user_id,first_name,last_name',
+            'approver.role:id,name'
+        ])->where('employee_id', $employee->id)->find($id);
 
         if (!$leave)
             return $this->error('Leave request not found', 404);
@@ -972,6 +982,153 @@ class EmployeePortalApiController extends ApiController
         $leave->delete();
 
         return $this->success(null, 'Leave request deleted successfully');
+    }
+
+    /**
+     * Get logged-in employee's completed salary summary & payment history.
+     */
+    public function mySalarySummary(): JsonResponse
+    {
+        $user = auth('api')->user();
+        if (!$user) {
+            return $this->error('Unauthorized', 401);
+        }
+
+        $employee = Employee::where('user_id', $user->id)->first();
+
+        // Fetch completed payrolls for this logged-in user
+        $payrolls = Payroll::where(function ($q) use ($user, $employee) {
+            $q->where('user_id', $user->id);
+            if ($employee) {
+                $q->orWhere('user_id', $user->id);
+            }
+        })
+            ->where('status', 'completed')
+            ->orderBy('pay_period_year', 'desc')
+            ->orderBy('pay_period_month', 'desc')
+            ->get();
+
+        $totalEarnings = 0;
+        $monthsGeneratedCount = $payrolls->count();
+        $paymentHistory = [];
+
+        foreach ($payrolls as $payroll) {
+            $totalEarnings += (float) ($payroll->net_pay ?? 0);
+            $paymentDate = ($payroll->status === 'completed' && $payroll->updated_at)
+                ? $payroll->updated_at->toDateString()
+                : null;
+
+            $paymentHistory[] = [
+                'id' => $payroll->id,
+                'month' => $payroll->pay_period_month,
+                'year' => $payroll->pay_period_year,
+                'month_year' => Carbon::createFromDate($payroll->pay_period_year, $payroll->pay_period_month, 1)->format('F Y'),
+                'gross_pay' => (float) ($payroll->gross_salary ?? 0),
+                'deductions' => (float) ($payroll->deductions ?? 0),
+                'overtime' => (float) ($payroll->overtime ?? 0),
+                'net_pay' => (float) ($payroll->net_pay ?? 0),
+                'currency' => $payroll->currency ?? 'AED',
+                'status' => $payroll->status,
+                'payment_date' => $paymentDate,
+            ];
+        }
+
+        return $this->success([
+            'employee_id' => $employee?->id,
+            'user_id' => $user->id,
+            'employee_name' => $employee ? trim($employee->first_name . ' ' . $employee->last_name) : $user->name,
+            'total_earnings' => round($totalEarnings, 2),
+            'months_generated_count' => $monthsGeneratedCount,
+            'payment_history' => $paymentHistory,
+        ]);
+    }
+
+    /**
+     * Get logged-in employee's completed salary history list.
+     */
+    public function mySalaryHistory(): JsonResponse
+    {
+        $user = auth('api')->user();
+        if (!$user) {
+            return $this->error('Unauthorized', 401);
+        }
+
+        $employee = Employee::where('user_id', $user->id)->first();
+
+        $payrolls = Payroll::where(function ($q) use ($user, $employee) {
+            $q->where('user_id', $user->id);
+            if ($employee) {
+                $q->orWhere('user_id', $employee->user_id);
+            }
+        })
+            ->where('status', 'completed')
+            ->orderBy('pay_period_year', 'desc')
+            ->orderBy('pay_period_month', 'desc')
+            ->get()
+            ->map(function ($payroll) use ($employee, $user) {
+                return [
+                    'id' => $payroll->id,
+                    'employee_name' => $employee ? trim($employee->first_name . ' ' . $employee->last_name) : $user->name,
+                    'employee_id' => $payroll->user_id,
+                    'month' => $payroll->pay_period_month,
+                    'year' => $payroll->pay_period_year,
+                    'month_year' => Carbon::createFromDate($payroll->pay_period_year, $payroll->pay_period_month, 1)->format('F Y'),
+                    'gross_salary' => (float) ($payroll->gross_salary ?? 0),
+                    'deductions' => (float) ($payroll->deductions ?? 0),
+                    'overtime' => (float) ($payroll->overtime ?? 0),
+                    'net_pay' => (float) ($payroll->net_pay ?? 0),
+                    'currency' => $payroll->currency ?? 'AED',
+                    'status' => $payroll->status,
+                    'payment_date' => $payroll->updated_at ? $payroll->updated_at->toDateString() : null,
+                ];
+            });
+
+        return $this->success($payrolls);
+    }
+
+    /**
+     * Download logged-in employee's own payslip PDF.
+     */
+    public function downloadMyPayslip($id)
+    {
+        $user = auth('api')->user();
+        if (!$user) {
+            return $this->error('Unauthorized', 401);
+        }
+
+        $employee = Employee::where('user_id', $user->id)->first();
+
+        $payroll = Payroll::with(['employee.user.designation', 'employee.bankDetails'])
+            ->where(function ($q) use ($user, $employee) {
+                $q->where('user_id', $user->id);
+                if ($employee) {
+                    $q->orWhere('user_id', $user->id);
+                }
+            })
+            ->find($id);
+
+        if (!$payroll) {
+            return $this->error('Payslip not found or access denied', 404);
+        }
+
+        if ($payroll->status !== 'completed') {
+            return $this->error('Cannot download payslip for incomplete payroll', 400);
+        }
+
+        try {
+            if (!view()->exists('pdf.payslip')) {
+                return $this->error('Payslip template not found', 500);
+            }
+
+            $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll]);
+            $monthName = Carbon::createFromFormat('m', $payroll->pay_period_month)->format('F');
+            $fileName = "Payslip_{$monthName}_{$payroll->pay_period_year}.pdf";
+
+            return $pdf->download($fileName);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error("Failed to generate PDF for payroll {$payroll->id}: " . $e->getMessage());
+            return $this->error('Failed to generate payslip: ' . $e->getMessage(), 500);
+        }
     }
 
     private function parseMultipartPut(Request $request): void

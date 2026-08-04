@@ -164,12 +164,12 @@ class PayrollController extends Controller
 
         if ($employeeSalaryPackages->isEmpty()) {
             return response()->json(['success' => false, 'message' => 'No active salary packages found for this employee'], 404);
-        } 
+        }
 
-        foreach($employeeSalaryPackages as $employeeSalaryPackage){
-            if($employeeSalaryPackage->currency == 'AED'){
+        foreach ($employeeSalaryPackages as $employeeSalaryPackage) {
+            if ($employeeSalaryPackage->currency == 'AED') {
                 $dubaiPackageData = $employeeSalaryPackage;
-            }else{
+            } else {
                 $homePackageData = $employeeSalaryPackage;
             }
         }
@@ -820,7 +820,15 @@ class PayrollController extends Controller
         $query = Payroll::with('employee')->where('status', 'completed');
 
         if ($request->has('employee_id')) {
-            $query->where('employee_id', $request->query('employee_id'));
+            $empParam = $request->query('employee_id');
+            // Try resolving Employee PK to user_id
+            $emp = Employee::find($empParam);
+            $userId = $emp ? $emp->user_id : $empParam;
+
+            $query->where(function ($q) use ($userId, $empParam) {
+                $q->where('user_id', $userId)
+                    ->orWhere('employee_id', $empParam);
+            });
         }
 
         $payrolls = $query->orderBy('pay_period_year', 'desc')
@@ -831,6 +839,71 @@ class PayrollController extends Controller
         return response()->json([
             'success' => true,
             'data' => $payrolls,
+        ]);
+    }
+
+    /**
+     * Get salary summary & payment history for a specific employee.
+     * Returns:
+     * - total_earnings (sum of net_pay of completed payrolls)
+     * - months_generated_count (number of completed payroll months)
+     * - payment_history (list of completed payrolls formatted with Gross Pay, Deductions, Net Pay, Status, Payment Date, Month/Year)
+     */
+    public function employeeSalarySummary(Request $request, $employee_id): JsonResponse
+    {
+        // Resolve Employee record (by Employee primary key or user_id)
+        $employee = Employee::find($employee_id);
+        if (!$employee) {
+            $employee = Employee::where('user_id', $employee_id)->first();
+        }
+
+        if (!$employee) {
+            return response()->json(['success' => false, 'message' => 'Employee not found'], 404);
+        }
+
+        // Fetch only completed payrolls for this employee
+        $payrolls = Payroll::where(function ($q) use ($employee) {
+            $q->where('user_id', $employee->user_id)
+                ->orWhere('employee_id', $employee->id);
+        })
+            ->where('status', 'completed')
+            ->orderBy('pay_period_year', 'desc')
+            ->orderBy('pay_period_month', 'desc')
+            ->get();
+
+        $totalEarnings = 0;
+        $monthsGeneratedCount = $payrolls->count();
+        $paymentHistory = [];
+
+        foreach ($payrolls as $payroll) {
+            $formatted = $this->formatPayroll($payroll);
+            $totalEarnings += (float) ($payroll->net_pay ?? 0);
+
+            $paymentHistory[] = [
+                'id' => $payroll->id,
+                'month' => $payroll->pay_period_month,
+                'year' => $payroll->pay_period_year,
+                'month_year' => Carbon::createFromDate($payroll->pay_period_year, $payroll->pay_period_month, 1)->format('F Y'),
+                'gross_pay' => (float) ($payroll->gross_salary ?? 0),
+                'deductions' => (float) ($payroll->deductions ?? 0),
+                'overtime' => (float) ($payroll->overtime ?? 0),
+                'net_pay' => (float) ($payroll->net_pay ?? 0),
+                'currency' => $payroll->currency ?? 'AED',
+                'status' => $payroll->status,
+                'payment_date' => $formatted['payment_date'],
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'employee_id' => $employee->id,
+                'user_id' => $employee->user_id,
+                'employee_name' => trim($employee->first_name . ' ' . $employee->last_name),
+                'total_earnings' => round($totalEarnings, 2),
+                'months_generated_count' => $monthsGeneratedCount,
+                'payment_history' => $paymentHistory,
+            ],
         ]);
     }
 

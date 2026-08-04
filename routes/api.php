@@ -182,8 +182,8 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::post('wfh-requests/{wfhRequest}/status', [WfhApiController::class, 'updateStatus'])->middleware('permission:wfh-requests.edit');
 
     // Leave Types (Admin side)
-    Route::apiResource('leave-types', LeaveTypeApiController::class)->middleware('permission:settings.read');
-    Route::post('leave-types/{leaveType}/status', [LeaveTypeApiController::class, 'updateStatus'])->middleware('permission:settings.edit');
+    Route::apiResource('leave-types', LeaveTypeApiController::class)->middleware('permission:leaves.read');
+    Route::post('leave-types/{leaveType}/status', [LeaveTypeApiController::class, 'updateStatus'])->middleware('permission:leaves.edit');
 
     // Working Hours
     Route::get('working-hours', [WorkingHourApiController::class, 'index'])->middleware('permission:settings.read');
@@ -195,7 +195,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::post('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'update'])->middleware('permission:leaves.edit');
 
     // Task Reports (Admin)
-    Route::apiResource('task-reports', AdminTaskReportApiController::class)->middleware('permission:reports.read');
+    Route::apiResource('task-reports', AdminTaskReportApiController::class)->middleware('permission:task-reports.read');
 
     // Reports
     Route::group(['prefix' => 'reports', 'middleware' => 'permission:reports.read'], function () {
@@ -208,7 +208,9 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::get('company-nearest-expiry', [ReportApiController::class, 'companyNearestExpiry']);
         Route::get('company-upcoming-renewals', [ReportApiController::class, 'companyUpcomingRenewals']);
         Route::get('pending-leaves', [ReportApiController::class, 'pendingLeavesReport']);
-        Route::post('export', [ReportApiController::class, 'export'])->middleware('permission:reports.read');
+        Route::get('projects', [ReportApiController::class, 'projectReport']);
+        Route::get('counts', [ReportApiController::class, 'reportCounts']);
+        Route::post('export', [ReportApiController::class, 'export']);
     });
 
     // Offboarding Routes
@@ -257,23 +259,25 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::post('/{id}/revoke', [AssetApiController::class, 'revoke']);
     });
 
-    // Payroll Management
-    Route::prefix('payroll')->group(function () {
-        Route::post('calculate', [PayrollController::class, 'calculateMonthlySalary']);
-        Route::post('overtime', [PayrollController::class, 'calculateOvertime']);
-        Route::post('summary', [PayrollController::class, 'calculateTotals']);
+    // Payroll Management (Admin side)
+    Route::group(['prefix' => 'payroll', 'middleware' => 'permission:payroll.read'], function () {
         Route::get('stats', [PayrollController::class, 'stats']);
         Route::get('/', [PayrollController::class, 'index']);
         Route::get('history', [PayrollController::class, 'history']);
+        Route::get('employee-summary/{employee_id}', [PayrollController::class, 'employeeSalarySummary']);
         Route::get('draft/{employee_id}', [PayrollController::class, 'getDraft']);
-        Route::post('save-step', [PayrollController::class, 'saveStep']);
-        Route::post('submit', [PayrollController::class, 'submitPayroll']);
-        Route::post('convert-salary', [PayrollController::class, 'convertSalary']);
-        Route::post('{id}/send-payslip', [PayrollController::class, 'sendPayslip']);
         Route::get('{id}/download', [PayrollController::class, 'downloadPayslip']);
         Route::get('{id}', [PayrollController::class, 'show']);
-        Route::put('{id}', [PayrollController::class, 'update']);
-        Route::delete('{id}', [PayrollController::class, 'destroy']);
+
+        Route::post('calculate', [PayrollController::class, 'calculateMonthlySalary'])->middleware('permission:payroll.edit');
+        Route::post('overtime', [PayrollController::class, 'calculateOvertime'])->middleware('permission:payroll.edit');
+        Route::post('summary', [PayrollController::class, 'calculateTotals'])->middleware('permission:payroll.edit');
+        Route::post('save-step', [PayrollController::class, 'saveStep'])->middleware('permission:payroll.edit');
+        Route::post('submit', [PayrollController::class, 'submitPayroll'])->middleware('permission:payroll.edit');
+        Route::post('convert-salary', [PayrollController::class, 'convertSalary'])->middleware('permission:payroll.edit');
+        Route::post('{id}/send-payslip', [PayrollController::class, 'sendPayslip'])->middleware('permission:payroll.edit');
+        Route::put('{id}', [PayrollController::class, 'update'])->middleware('permission:payroll.edit');
+        Route::delete('{id}', [PayrollController::class, 'destroy'])->middleware('permission:payroll.edit');
     });
 });
 
@@ -295,7 +299,6 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::delete('leaves/{leave}', [EmployeePortalApiController::class, 'destroyLeave']);
     Route::get('leave-types', [LeaveTypeApiController::class, 'getAllLeaveTypes']);
     Route::get('leave-allocations/{employee}', [LeaveAllocationApiController::class, 'show']);
-
 
     // Task Reports
     Route::get('task-reports', [EmployeePortalApiController::class, 'taskReports']);
@@ -321,6 +324,11 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     // Profile Settings
     Route::post('change-password', [ProfileApiController::class, 'changePassword']);
     Route::post('update-profile', [ProfileApiController::class, 'updateProfile']);
+
+    // Payroll (Employee Portal)
+    Route::get('payroll/summary', [EmployeePortalApiController::class, 'mySalarySummary']);
+    Route::get('payroll/history', [EmployeePortalApiController::class, 'mySalaryHistory']);
+    Route::get('payroll/{id}/download', [EmployeePortalApiController::class, 'downloadMyPayslip']);
 });
 
 
