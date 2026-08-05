@@ -42,6 +42,8 @@ return new class extends Migration
             $table->time('request_time');
             $table->text('reason');
             $table->string('status')->default('pending');
+            $table->string('timezone')->nullable();
+            $table->string('created_by')->nullable();
             $table->timestamps();
         });
 

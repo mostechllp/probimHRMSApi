@@ -13,10 +13,14 @@ use App\Models\LeaveRequest;
 use App\Models\LeaveType;
 use App\Models\LeaveAllocation;
 use App\Models\Payroll;
+use App\Models\WorkingHour;
+use App\Models\AttendanceRequest;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
 
 class EmployeePortalApiController extends ApiController
@@ -120,12 +124,17 @@ class EmployeePortalApiController extends ApiController
             });
         }
 
+        $leave_employee_id = Employee::where('user_id', $user->id)->first();
+
+        $year = Carbon::now()->format('Y');
         // Leave stats
-        $totalLeavesTaken = LeaveRequest::where('employee_id', $employee->id)
+        $totalLeaveAllocated = LeaveAllocation::where('employee_id', $leave_employee_id->id)->where('year', $year)->sum('allocated_days');
+
+        $totalLeavesTaken = LeaveRequest::where('employee_id', $leave_employee_id->id)
             ->where('status', 'approved')
             ->sum('duration_days');
 
-        $leaveBalance = $employee->total_leaves_allocated - $totalLeavesTaken;
+        $leaveBalance = $totalLeaveAllocated - $totalLeavesTaken;
 
         // Punch Access Logic
         $canPunch = true;
@@ -173,7 +182,7 @@ class EmployeePortalApiController extends ApiController
             'leave_stats' => [
                 'total_taken' => (float) $totalLeavesTaken,
                 'balance' => (float) $leaveBalance,
-                'allocated' => (float) $employee->total_leaves_allocated,
+                'allocated' => (float) $totalLeaveAllocated,
             ],
             'attendance_history' => $attendanceHistory,
             'can_punch' => $canPunch,
@@ -194,6 +203,7 @@ class EmployeePortalApiController extends ApiController
             'timezone' => 'nullable|string|timezone',
             'work_location' => 'nullable|string'
         ]);
+
         $user = auth('api')->user();
         $employee = $user ? $user->employee : null;
         if (!$employee)
@@ -212,7 +222,9 @@ class EmployeePortalApiController extends ApiController
         $timezone = $request->input('timezone', config('app.timezone'));
         session(['employee_timezone' => $timezone]);
 
-        $today = Carbon::now($timezone)->toDateString();
+        $now = Carbon::now($timezone);
+        $today = $now->toDateString();
+        $dayName = $now->format('l'); // e.g. "Monday"
 
         $alreadyPunched = AttendanceLog::where('userid', $user->id)
             ->whereDate('log_date', $today)
@@ -222,11 +234,96 @@ class EmployeePortalApiController extends ApiController
             return $this->error('Already punched in today.', 400);
         }
 
+        // ── Late check-in guard ──────────────────────────────────────────────
+        // If working hours are configured for today and the employee is trying
+        // to punch in more than 10 minutes after the scheduled start_time,
+        // block the punch-in and raise a late_check_in attendance request.
+        $workingHour = WorkingHour::where('day', $dayName)
+            ->where('is_enabled', true)
+            ->first();
+
+        if ($workingHour && !empty($workingHour->start_time)) {
+            // Build today's scheduled start as a full Carbon datetime
+            $scheduledStart = Carbon::createFromFormat(
+                'Y-m-d H:i:s',
+                $today . ' ' . $workingHour->start_time,
+                $timezone
+            );
+
+            $minutesLate = $scheduledStart->diffInMinutes($now, false);
+
+            if ($minutesLate > 0) {
+                $hours = intdiv($minutesLate, 60);
+                $minutes = $minutesLate % 60;
+
+                if ($hours > 0 && $minutes > 0) {
+                    $lateDuration = "{$hours} hrs {$minutes} mins";
+                } elseif ($hours > 0) {
+                    $lateDuration = "{$hours} hrs";
+                } else {
+                    $lateDuration = "{$minutes} mins";
+                }
+            } else {
+                $lateDuration = "On Time";
+            } // positive = late
+
+            if ($minutesLate > 10) {
+                $scheduledStartFormatted = Carbon::createFromFormat('H:i:s', $workingHour->start_time)->format('h:i A');
+
+                // Check if an approved late_check_in request exists for today
+                $approvedRequest = AttendanceRequest::where('employee_id', $employee->id)
+                    ->where('type', 'late_check_in')
+                    ->where('request_date', $today)
+                    ->where('status', 'approved')
+                    ->first();
+
+                // Admin approved → allow the punch-in to proceed normally
+                if ($approvedRequest) {
+                    // fall through to the AttendanceLog::create() below
+                }
+                // Check if a pending request already exists
+                else {
+                    $pendingRequest = AttendanceRequest::where('employee_id', $employee->id)
+                        ->where('type', 'late_check_in')
+                        ->where('request_date', $today)
+                        ->where('status', 'pending')
+                        ->first();
+
+                    if (!$pendingRequest) {
+                        // No request at all — auto-create one now
+                        AttendanceRequest::create([
+                            'employee_id' => $employee->id,
+                            'type' => 'late_check_in',
+                            'request_date' => $today,
+                            'request_time' => $now->format('H:i:s'),
+                            'reason' => "Employee attempted to punch in {$lateDuration} late (scheduled: {$workingHour->start_time}).",
+                            'status' => 'pending',
+                            'timezone' => $timezone,
+                            'created_by' => 'admin'
+                        ]);
+
+                        return $this->error(
+                            "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
+                            "A late check-in request has been sent to HR for approval.",
+                            403
+                        );
+                    }
+
+                    // Pending request exists — just inform the employee to wait
+                    return $this->error(
+                        "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
+                        "Your late check-in request is pending HR approval. Please wait.",
+                        403
+                    );
+                }
+            }
+        }
+        // ────────────────────────────────────────────────────────────────────
+
         $log = AttendanceLog::create([
-            // 'company_id' => $user->company_id ?? 1,
             'userid' => $user->id,
             'log_date' => $today,
-            'punch_in' => Carbon::now($timezone),
+            'punch_in' => $now,
             'status' => 1,
             'log_status' => 'IN',
             'punch_in_latitude' => $request->input('punch_in_latitude'),
@@ -1128,6 +1225,109 @@ class EmployeePortalApiController extends ApiController
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error("Failed to generate PDF for payroll {$payroll->id}: " . $e->getMessage());
             return $this->error('Failed to generate payslip: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Get the logged-in employee's uploaded documents.
+     *
+     * Returns every document field stored on the employee record
+     * as a fully-resolved public URL (null when not uploaded yet).
+     */
+    public function myDocuments(): JsonResponse
+    {
+        $user = auth('api')->user();
+        if (!$user) {
+            return $this->error('Unauthorized', 401);
+        }
+
+        $employee = Employee::where('user_id', $user->id)->first();
+        if (!$employee) {
+            return $this->error('Employee profile not found', 404);
+        }
+
+        // All document fields stored on the employees table
+        $documentFields = [
+            'avatar',
+            'passport_1st_page',
+            'passport_2nd_page',
+            'passport_outer_page',
+            'passport_id_page',
+            'visa_page',
+            'labor_card',
+            'eid_1st_page',
+            'eid_2nd_page',
+            'educational_1st_page',
+            'educational_2nd_page',
+            'home_country_id_proof',
+        ];
+
+        $documents = [];
+        foreach ($documentFields as $field) {
+            $path = $employee->$field;
+            $documents[$field] = $path
+                ? asset('storage/' . ltrim($path, '/'))
+                : null;
+        }
+
+        // Include additional_documents (JSON array of extra uploads)
+        $additional = [];
+        if (!empty($employee->additional_documents) && is_array($employee->additional_documents)) {
+            foreach ($employee->additional_documents as $doc) {
+                $additional[] = [
+                    'label' => $doc['label'] ?? null,
+                    'url' => isset($doc['path'])
+                        ? asset('storage/' . ltrim($doc['path'], '/'))
+                        : null,
+                ];
+            }
+        }
+
+        return $this->success([
+            'employee_id' => $employee->id,
+            'documents' => $documents,
+            'additional_documents' => $additional,
+        ]);
+    }
+
+    /**
+     * Upload a temporary document file during employee onboarding.
+     *
+     * The returned `path` value should be sent back in the employee
+     * create/update payload so the server can move it to permanent storage.
+     */
+    public function uploadTempDocument(Request $request): JsonResponse
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:jpg,jpeg,png,pdf|max:5120',
+        ]);
+
+        try {
+            $file = $request->file('file');
+
+            if (!$file->isValid()) {
+                return $this->error('Invalid file upload', 400);
+            }
+
+            $fileName = Str::uuid() . '.' . $file->getClientOriginalExtension();
+
+            if (!Storage::disk('public')->exists('temp')) {
+                Storage::disk('public')->makeDirectory('temp');
+            }
+
+            $path = Storage::disk('public')->putFileAs('temp', $file, $fileName);
+
+            if (!$path) {
+                return $this->error('File storage failed', 500);
+            }
+
+            return $this->success([
+                'path' => $path,
+                'url' => Storage::disk('public')->url($path),
+            ], 'File uploaded successfully', 201);
+
+        } catch (\Exception $e) {
+            return $this->error('Upload failed: ' . $e->getMessage(), 500);
         }
     }
 

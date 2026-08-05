@@ -44,11 +44,17 @@ class ProjectAssignmentApiController extends ApiController
         if ($isManagerOrLead) {
             $query->whereHas('projects', function ($q) use ($user) {
                 $q->where('project_manager_id', $user->id)
-                  ->orWhere('team_lead_id', $user->id);
+                    ->orWhere('team_lead_id', $user->id);
             });
         }
 
         $employees = $query->get();
+        return $this->success($employees);
+    }
+
+    public function getEmployees()
+    {
+        $employees = Employee::where('type', '!=', 'admin')->whereHas('user', fn($q) => $q->where('status', 'active'))->get();
         return $this->success($employees);
     }
 
@@ -62,12 +68,14 @@ class ProjectAssignmentApiController extends ApiController
 
         $employeeQuery = Employee::query();
         if ($isManagerOrLead) {
-            $employeeQuery->with(['projects' => function ($q) use ($user) {
-                $q->where(function ($sub) use ($user) {
-                    $sub->where('project_manager_id', $user->id)
-                        ->orWhere('team_lead_id', $user->id);
-                });
-            }]);
+            $employeeQuery->with([
+                'projects' => function ($q) use ($user) {
+                    $q->where(function ($sub) use ($user) {
+                        $sub->where('project_manager_id', $user->id)
+                            ->orWhere('team_lead_id', $user->id);
+                    });
+                }
+            ]);
         } else {
             $employeeQuery->with('projects');
         }
@@ -264,14 +272,14 @@ class ProjectAssignmentApiController extends ApiController
     public function monthlyProjectHours(Request $request): JsonResponse
     {
         $request->validate([
-            'date'        => 'nullable|date_format:Y-m-d',
-            'month'       => 'nullable|integer|min:1|max:12',
-            'year'        => 'nullable|integer|min:2000',
-            'project_id'  => 'nullable|exists:projects,id',
+            'date' => 'nullable|date_format:Y-m-d',
+            'month' => 'nullable|integer|min:1|max:12',
+            'year' => 'nullable|integer|min:2000',
+            'project_id' => 'nullable|exists:projects,id',
             'employee_id' => 'nullable|exists:employees,id',
         ]);
 
-        $projectId  = $request->input('project_id');
+        $projectId = $request->input('project_id');
         $employeeId = $request->input('employee_id');
 
         // ------------------------------------------------------------------
@@ -283,15 +291,15 @@ class ProjectAssignmentApiController extends ApiController
 
         if ($filterDate) {
             $dateCarbon = Carbon::parse($filterDate);
-            $month      = $dateCarbon->month;
-            $year       = $dateCarbon->year;
-            $startDate  = $dateCarbon->toDateString();
-            $endDate    = $dateCarbon->toDateString();   // same day → single-day range
+            $month = $dateCarbon->month;
+            $year = $dateCarbon->year;
+            $startDate = $dateCarbon->toDateString();
+            $endDate = $dateCarbon->toDateString();   // same day → single-day range
         } else {
-            $month     = (int) $request->input('month', Carbon::now()->month);
-            $year      = (int) $request->input('year',  Carbon::now()->year);
+            $month = (int) $request->input('month', Carbon::now()->month);
+            $year = (int) $request->input('year', Carbon::now()->year);
             $startDate = Carbon::createFromDate($year, $month, 1)->startOfMonth()->toDateString();
-            $endDate   = Carbon::createFromDate($year, $month, 1)->endOfMonth()->toDateString();
+            $endDate = Carbon::createFromDate($year, $month, 1)->endOfMonth()->toDateString();
         }
 
         // Build base query on project_time_logs for the resolved date range.
@@ -312,7 +320,7 @@ class ProjectAssignmentApiController extends ApiController
         if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
             $logsQuery->whereHas('project', function ($q) use ($user) {
                 $q->where('project_manager_id', $user->id)
-                  ->orWhere('team_lead_id', $user->id);
+                    ->orWhere('team_lead_id', $user->id);
             });
         }
 
@@ -335,8 +343,8 @@ class ProjectAssignmentApiController extends ApiController
 
         // Build the base response meta that is shared across both empty and populated responses.
         $meta = [
-            'month'  => $month,
-            'year'   => $year,
+            'month' => $month,
+            'year' => $year,
             'period' => Carbon::createFromDate($year, $month, 1)->format('F Y'),
         ];
         if ($filterDate) {
@@ -348,7 +356,7 @@ class ProjectAssignmentApiController extends ApiController
         }
 
         // Group logs by user_id then project_id
-        $grouped   = $logs->groupBy('user_id');
+        $grouped = $logs->groupBy('user_id');
         $employees = [];
 
         foreach ($grouped as $userId => $userLogs) {
@@ -357,19 +365,19 @@ class ProjectAssignmentApiController extends ApiController
             $empRecord = $userModel?->employee;
 
             $projectBreakdown = [];
-            $totalMinutes     = 0;
+            $totalMinutes = 0;
 
             foreach ($userLogs->groupBy('project_id') as $projId => $projLogs) {
                 $projectModel = $projLogs->first()->project;
-                $minutes      = (int) $projLogs->sum('time_taken_minutes');
+                $minutes = (int) $projLogs->sum('time_taken_minutes');
                 $totalMinutes += $minutes;
 
                 $projectBreakdown[] = [
-                    'project_id'    => $projId,
-                    'project_name'  => $projectModel?->name ?? 'Unknown',
+                    'project_id' => $projId,
+                    'project_name' => $projectModel?->name ?? 'Unknown',
                     'total_minutes' => $minutes,
-                    'total_hours'   => round($minutes / 60, 2),
-                    'formatted'     => $this->formatMinutes($minutes),
+                    'total_hours' => round($minutes / 60, 2),
+                    'formatted' => $this->formatMinutes($minutes),
                 ];
             }
 
@@ -377,17 +385,17 @@ class ProjectAssignmentApiController extends ApiController
             usort($projectBreakdown, fn($a, $b) => $b['total_minutes'] <=> $a['total_minutes']);
 
             $employees[] = [
-                'id'              => $empRecord?->id,
-                'user_id'         => $empRecord?->user_id ?? $userId,
-                'employee_id'     => $empRecord?->employee_id,
-                'name'            => $empRecord
+                'id' => $empRecord?->id,
+                'user_id' => $empRecord?->user_id ?? $userId,
+                'employee_id' => $empRecord?->employee_id,
+                'name' => $empRecord
                     ? trim($empRecord->first_name . ' ' . $empRecord->last_name)
                     : ($userModel ? trim($userModel->first_name . ' ' . $userModel->last_name) : 'Unknown'),
-                'avatar'          => $empRecord?->avatar,
-                'total_minutes'   => $totalMinutes,
-                'total_hours'     => round($totalMinutes / 60, 2),
+                'avatar' => $empRecord?->avatar,
+                'total_minutes' => $totalMinutes,
+                'total_hours' => round($totalMinutes / 60, 2),
                 'total_formatted' => $this->formatMinutes($totalMinutes),
-                'projects'        => $projectBreakdown,
+                'projects' => $projectBreakdown,
             ];
         }
 

@@ -13,6 +13,8 @@ class AttendanceRequest extends Model
         'request_time',
         'reason',
         'status',
+        'timezone',
+        'created_by'
     ];
 
     public function employee()

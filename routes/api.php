@@ -146,12 +146,13 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::get('projects/eligible-managers', [ProjectApiController::class, 'getEligibleManagers']);
     Route::get('projects/eligible-team-leads', [ProjectApiController::class, 'getEligibleTeamLeads']);
     Route::apiResource('projects', ProjectApiController::class);
-    Route::get('project-assignments', [ProjectAssignmentApiController::class, 'index']);
-    Route::get('project-assignments/monthly-hours', [ProjectAssignmentApiController::class, 'monthlyProjectHours']);
-    Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show']);
-    Route::get('project-assignments/{id}/working-time', [ProjectAssignmentApiController::class, 'workingTime']);
-    Route::post('employees/projects', [ProjectAssignmentApiController::class, 'assign']);
-    Route::delete('project-assignments/{id}/all', [ProjectAssignmentApiController::class, 'removeAllAssignments']);
+    Route::get('project-assignments', [ProjectAssignmentApiController::class, 'index'])->middleware('permission:project-assignments.read');
+    Route::get('project-assignments/monthly-hours', [ProjectAssignmentApiController::class, 'monthlyProjectHours'])->middleware('permission:project-assignments.read');
+    Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show'])->middleware('permission:project-assignments.read');
+    Route::get('project-assignments/{id}/working-time', [ProjectAssignmentApiController::class, 'workingTime'])->middleware('permission:project-assignments.read');
+    Route::post('employees/projects', [ProjectAssignmentApiController::class, 'assign'])->middleware('permission:project-assignments.edit');
+    Route::get('project-assignments/employees', [ProjectAssignmentApiController::class, 'getEmployees'])->middleware('permission:project-assignments.read');
+    Route::delete('project-assignments/{id}/all', [ProjectAssignmentApiController::class, 'removeAllAssignments'])->middleware('permission:project-assignments.delete');
 
     // HR Modules
     Route::get('designations', [HRApiController::class, 'indexDesignations'])->middleware('permission:organizations.read');
@@ -317,6 +318,8 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     // Attendance Requests
     Route::get('attendance-requests', [EmployeeAttendanceRequestApiController::class, 'index']);
     Route::post('attendance-requests', [EmployeeAttendanceRequestApiController::class, 'store']);
+    Route::put('attendance-requests/{id}', [EmployeeAttendanceRequestApiController::class, 'update']);
+    Route::delete('attendance-requests/{id}', [EmployeeAttendanceRequestApiController::class, 'destroy']);
 
     //Assets
     Route::get('assets/{id}', [AssetApiController::class, 'employeeAssets']);
@@ -324,6 +327,10 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     // Profile Settings
     Route::post('change-password', [ProfileApiController::class, 'changePassword']);
     Route::post('update-profile', [ProfileApiController::class, 'updateProfile']);
+
+    // My Documents (view uploaded docs & upload temp during onboarding)
+    Route::get('my-documents', [EmployeePortalApiController::class, 'myDocuments']);
+    Route::post('upload-temp', [EmployeePortalApiController::class, 'uploadTempDocument']);
 
     // Payroll (Employee Portal)
     Route::get('payroll/summary', [EmployeePortalApiController::class, 'mySalarySummary']);

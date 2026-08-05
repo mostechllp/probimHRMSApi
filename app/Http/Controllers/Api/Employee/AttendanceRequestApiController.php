@@ -35,8 +35,9 @@ class AttendanceRequestApiController extends ApiController
         $request->validate([
             'type' => 'required|string|in:early_check_in,late_check_in,missed_punch_in,missed_punch_out',
             'request_date' => 'required|date', // Expecting Y-m-d from API
-            'request_time' => 'required|date_format:H:i',
+            'request_time' => 'required',
             'reason' => 'required|string|max:1000',
+            'timezone' => 'nullable|string',
         ]);
 
         $employee = auth()->user()->employee;
@@ -53,9 +54,37 @@ class AttendanceRequestApiController extends ApiController
             'request_date' => $date,
             'request_time' => $request->request_time,
             'reason' => $request->reason,
-            'status' => 'pending',
+            'timezone' => $request->timezone,
+            'status' => 'pending'
         ]);
 
         return $this->success($attendanceRequest, 'Attendance request submitted successfully.', 201);
+    }
+
+    public function update(Request $request, AttendanceRequest $attendanceRequest): JsonResponse
+    {
+        $request->validate([
+            'request_date' => 'required|date',
+            'request_time' => 'required',
+            'reason' => 'required|string',
+            'timezone' => 'nullable|string',
+        ]);
+
+        $attendanceRequest->update([
+            'request_date' => $request->request_date,
+            'request_time' => $request->request_time,
+            'reason' => $request->reason,
+        ]);
+
+        return $this->success($attendanceRequest, 'Attendance request updated successfully.');
+    }
+
+    /**
+     * Remove the attendance request.
+     */
+    public function destroy(AttendanceRequest $attendanceRequest): JsonResponse
+    {
+        $attendanceRequest->delete();
+        return $this->success(null, 'Attendance request deleted successfully.');
     }
 }
