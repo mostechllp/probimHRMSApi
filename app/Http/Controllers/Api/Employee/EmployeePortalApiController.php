@@ -79,7 +79,6 @@ class EmployeePortalApiController extends ApiController
             } else {
                 $attendance->working_hours = "{$hours} hrs {$mins} mins";
             }
-
         }
 
         // 30-day attendance history
@@ -304,7 +303,7 @@ class EmployeePortalApiController extends ApiController
 
                         return $this->error(
                             "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
-                            "A late check-in request has been sent to HR for approval.",
+                                "A late check-in request has been sent to HR for approval.",
                             403
                         );
                     }
@@ -312,7 +311,7 @@ class EmployeePortalApiController extends ApiController
                     // Pending request exists — just inform the employee to wait
                     return $this->error(
                         "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
-                        "Your late check-in request is pending HR approval. Please wait.",
+                            "Your late check-in request is pending HR approval. Please wait.",
                         403
                     );
                 }
@@ -370,9 +369,11 @@ class EmployeePortalApiController extends ApiController
         $dayOfWeek = Carbon::parse($logDate)->format('l');
 
         $assignedProjectIds = $employee->projects()->pluck('projects.id')->toArray();
+        $totalProjectTime = 0;
 
         if (count($assignedProjectIds) > 0) {
             $submittedProjectTimes = collect($request->project_times ?? []);
+            $totalProjectTime = $submittedProjectTimes->sum('time_minutes');
 
             if ($submittedProjectTimes) {
                 foreach ($submittedProjectTimes as $pt) {
@@ -427,6 +428,10 @@ class EmployeePortalApiController extends ApiController
         // Safety guard against anomalous durations (e.g. stale punch-in from days ago)
         if ($workingHours > 1440) { // more than 24 hours
             \Log::warning("Anomalous working hours for user {$user->id}: {$workingHours} minutes (punch_in: {$punchIn}, punch_out: {$now})");
+        }
+
+        if ($totalProjectTime > $workingHours) { 
+            return $this->error('The total project time cannot exceed the total working hours.', 422);
         }
 
         $log->update([
@@ -1325,7 +1330,6 @@ class EmployeePortalApiController extends ApiController
                 'path' => $path,
                 'url' => Storage::disk('public')->url($path),
             ], 'File uploaded successfully', 201);
-
         } catch (\Exception $e) {
             return $this->error('Upload failed: ' . $e->getMessage(), 500);
         }

@@ -391,6 +391,49 @@ class DashboardApiController extends ApiController
         return $this->success($notifications);
     }
 
+    public function getReadNotifications(): JsonResponse
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return $this->error('User not found', 401);
+        }
+
+        $notifications = $user->readNotifications()
+            ->latest()
+            ->get();
+
+        return $this->success($notifications);
+    }
+
+    public function getAllNotifications(): JsonResponse
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return $this->error('User not found', 401);
+        }
+
+        $notifications = $user->notifications()->get();
+        return $this->success($notifications);
+    }
+
+    public function showNotification($id): JsonResponse
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return $this->error('User not found', 401);
+        }
+
+        $notification = $user->notifications()->find($id);
+
+        if (!$notification) {
+            return $this->error('Notification not found', 404);
+        }
+
+        return $this->success($notification);
+    }
+
     /**
      * Mark notification as read.
      */
@@ -406,6 +449,16 @@ class DashboardApiController extends ApiController
         }
 
         return $this->error('Notification not found', 404);
+    }
+
+    public function markAllAsRead(): JsonResponse
+    {
+        auth()->user()
+            ->notifications()
+            ->where('read_at', null)
+            ->update(['read_at' => now()]);
+
+        return $this->success(null, 'All notifications marked as read');
     }
 
     /**

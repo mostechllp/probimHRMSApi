@@ -54,7 +54,7 @@ class ProjectAssignmentApiController extends ApiController
 
     public function getEmployees()
     {
-        $employees = Employee::where('type', '!=', 'admin')->whereHas('user', fn($q) => $q->where('status', 'active'))->get();
+        $employees = Employee::whereHas('user', fn($q) => $q->where('status', 'active')->where('type', '!=', 'admin'))->get();
         return $this->success($employees);
     }
 

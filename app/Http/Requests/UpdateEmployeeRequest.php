@@ -27,7 +27,16 @@ class UpdateEmployeeRequest extends FormRequest
             'labor_issued_date',
             'labor_expiry_date',
             'eid_issued_date',
-            'eid_expiry_date'
+            'eid_expiry_date',
+            'probation_start_date',
+            'probation_end_date',
+            'confirmation_date',
+            'contract_start_date',
+            'contract_end_date',
+            'notice_period_start_date',
+            'last_working_day',
+            'resignation_date',
+            'relieving_date'
         ];
 
         foreach ($dates as $field) {
@@ -92,6 +101,15 @@ class UpdateEmployeeRequest extends FormRequest
             'company_id' => 'nullable|exists:companies,id',
             'dob' => 'nullable|date',
             'joining_date' => 'nullable|date',
+            'probation_start_date' => 'nullable|date',
+            'probation_end_date' => 'nullable|date',
+            'confirmation_date' => 'nullable|date',
+            'contract_start_date' => 'nullable|date',
+            'contract_end_date' => 'nullable|date',
+            'notice_period_start_date' => 'nullable|date',
+            'last_working_day' => 'nullable|date',
+            'resignation_date' => 'nullable|date',
+            'relieving_date' => 'nullable|date',
             'gender' => 'nullable|string|max:255',
             'nationality' => 'nullable|string|max:255',
             'marital_status' => 'nullable|string|max:255',

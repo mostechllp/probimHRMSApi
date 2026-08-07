@@ -24,6 +24,30 @@ class AttendanceRequestApiController extends ApiController
             ->latest()
             ->get();
 
+        $requests->transform(function ($request) {
+            $timezone = $request->timezone ?? 'Asia/Dubai';
+
+            $tzAbbreviation = match ($timezone) {
+                'Asia/Kolkata',
+                'Asia/Calcutta',
+                'IST',
+                '+05:30',
+                'UTC+05:30' => 'IST',
+                'Asia/Dubai',
+                'GST',
+                '+04:00',
+                'UTC+04:00' => 'GST',
+                default => Carbon::now($timezone)->format('T'),
+            };
+
+            $request->request_time = $request->request_time
+                ? Carbon::createFromFormat('H:i:s', $request->request_time)
+                ->format('h:i A') . " {$tzAbbreviation}"
+                : '--';
+
+            return $request;
+        });
+
         return $this->success($requests);
     }
 
@@ -68,6 +92,7 @@ class AttendanceRequestApiController extends ApiController
             'request_time' => 'required',
             'reason' => 'required|string',
             'timezone' => 'nullable|string',
+            'type' => 'required|string'
         ]);
 
         $attendanceRequest->update([
@@ -77,6 +102,13 @@ class AttendanceRequestApiController extends ApiController
         ]);
 
         return $this->success($attendanceRequest, 'Attendance request updated successfully.');
+    }
+
+    public function show(AttendanceRequest $attendanceRequest): JsonResponse
+    {
+        $attendanceRequest->load('employee');
+
+        return $this->success($attendanceRequest);
     }
 
     /**

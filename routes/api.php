@@ -82,6 +82,10 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::get('dashboard/summary', [DashboardApiController::class, 'getSummaryStats'])->middleware('permission:dashboard.read');
     Route::get('dashboard/charts', [DashboardApiController::class, 'getDetailedChartData'])->middleware('permission:dashboard.read');
     Route::get('notifications', [DashboardApiController::class, 'getNotifications'])->middleware('permission:dashboard.read');
+    Route::get('notifications/all', [DashboardApiController::class, 'getAllNotifications'])->middleware('permission:dashboard.read');
+    Route::get('notifications/read', [DashboardApiController::class, 'getReadNotifications'])->middleware('permission:dashboard.read');
+    Route::post('notifications/mark-all-as-read', [DashboardApiController::class, 'markAllAsRead'])->middleware('permission:dashboard.edit');
+    Route::get('notifications/{id}', [DashboardApiController::class, 'showNotification'])->middleware('permission:dashboard.read');
     Route::post('notifications/{id}/mark-as-read', [DashboardApiController::class, 'markAsRead'])->middleware('permission:dashboard.edit');
 
     // Employees
@@ -128,6 +132,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::get('attendance-requests', [AdminAttendanceRequestApiController::class, 'index'])->middleware('permission:attendance.read');
     Route::post('attendance-requests/{attendanceRequest}/status', [AdminAttendanceRequestApiController::class, 'updateStatus'])->middleware('permission:attendance.edit');
     Route::put('attendance-requests/{attendanceRequest}', [AdminAttendanceRequestApiController::class, 'update'])->middleware('permission:attendance.edit');
+    Route::get('attendance-requests/{attendanceRequest}', [AdminAttendanceRequestApiController::class, 'show'])->middleware('permission:attendance.edit');
     Route::delete('attendance-requests/{attendanceRequest}', [AdminAttendanceRequestApiController::class, 'destroy'])->middleware('permission:attendance.delete');
 
     // Organizations & Companies
@@ -148,10 +153,10 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::apiResource('projects', ProjectApiController::class);
     Route::get('project-assignments', [ProjectAssignmentApiController::class, 'index'])->middleware('permission:project-assignments.read');
     Route::get('project-assignments/monthly-hours', [ProjectAssignmentApiController::class, 'monthlyProjectHours'])->middleware('permission:project-assignments.read');
+    Route::get('project-assignments/employees', [ProjectAssignmentApiController::class, 'getEmployees'])->middleware('permission:project-assignments.read');
     Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show'])->middleware('permission:project-assignments.read');
     Route::get('project-assignments/{id}/working-time', [ProjectAssignmentApiController::class, 'workingTime'])->middleware('permission:project-assignments.read');
     Route::post('employees/projects', [ProjectAssignmentApiController::class, 'assign'])->middleware('permission:project-assignments.edit');
-    Route::get('project-assignments/employees', [ProjectAssignmentApiController::class, 'getEmployees'])->middleware('permission:project-assignments.read');
     Route::delete('project-assignments/{id}/all', [ProjectAssignmentApiController::class, 'removeAllAssignments'])->middleware('permission:project-assignments.delete');
 
     // HR Modules
@@ -212,6 +217,11 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::get('projects', [ReportApiController::class, 'projectReport']);
         Route::get('counts', [ReportApiController::class, 'reportCounts']);
         Route::post('export', [ReportApiController::class, 'export']);
+
+        // Probation & Contract Renewal Alerts
+        Route::get('employee-probation-ending', [ReportApiController::class, 'employeeProbationEnding']);
+        Route::get('employee-contract-renewal', [ReportApiController::class, 'employeeContractRenewal']);
+        Route::post('send-probation-contract-alerts', [ReportApiController::class, 'sendProbationContractAlerts']);
     });
 
     // Offboarding Routes
@@ -318,8 +328,9 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     // Attendance Requests
     Route::get('attendance-requests', [EmployeeAttendanceRequestApiController::class, 'index']);
     Route::post('attendance-requests', [EmployeeAttendanceRequestApiController::class, 'store']);
-    Route::put('attendance-requests/{id}', [EmployeeAttendanceRequestApiController::class, 'update']);
-    Route::delete('attendance-requests/{id}', [EmployeeAttendanceRequestApiController::class, 'destroy']);
+    Route::get('attendance-requests/{attendanceRequest}', [EmployeeAttendanceRequestApiController::class, 'show']);
+    Route::put('attendance-requests/{attendanceRequest}', [EmployeeAttendanceRequestApiController::class, 'update']);
+    Route::delete('attendance-requests/{attendanceRequest}', [EmployeeAttendanceRequestApiController::class, 'destroy']);
 
     //Assets
     Route::get('assets/{id}', [AssetApiController::class, 'employeeAssets']);

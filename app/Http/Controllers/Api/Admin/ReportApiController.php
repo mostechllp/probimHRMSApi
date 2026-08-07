@@ -19,6 +19,7 @@ use App\Models\Document;
 use App\Models\User;
 use App\Models\WorkingHour;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 use App\Models\TaskReport;
@@ -1467,5 +1468,78 @@ class ReportApiController extends ApiController
         }
 
         return "{$mins} mins";
+    }
+
+    // ── Probation & Contract Renewal ────────────────────────────────────────────
+
+    /**
+     * List employees whose probation period ends within the next 30 days.
+     *
+     * GET /api/admin/reports/employee-probation-ending
+     */
+    public function employeeProbationEnding(): JsonResponse
+    {
+        $today     = Carbon::today();
+        $threshold = $today->copy()->addDays(30);
+
+        $employees = Employee::whereBetween('probation_end_date', [$today, $threshold])
+            ->select('id', 'first_name', 'last_name', 'employee_id', 'probation_end_date')
+            ->orderBy('probation_end_date')
+            ->get()
+            ->map(function ($emp) use ($today) {
+                $emp->days_left = (int) Carbon::parse($emp->probation_end_date)->diffInDays($today);
+                return $emp;
+            });
+
+        return $this->success([
+            'employees' => $employees,
+            'count'     => $employees->count(),
+            'title'     => 'Employees – Probation Ending Soon',
+            'subtitle'  => 'Probation period ending within 30 days',
+        ]);
+    }
+
+    /**
+     * List employees whose contract end date falls within the next 30 days.
+     *
+     * GET /api/admin/reports/employee-contract-renewal
+     */
+    public function employeeContractRenewal(): JsonResponse
+    {
+        $today     = Carbon::today();
+        $threshold = $today->copy()->addDays(30);
+
+        $employees = Employee::whereBetween('contract_end_date', [$today, $threshold])
+            ->select('id', 'first_name', 'last_name', 'employee_id', 'contract_end_date')
+            ->orderBy('contract_end_date')
+            ->get()
+            ->map(function ($emp) use ($today) {
+                $emp->days_left = (int) Carbon::parse($emp->contract_end_date)->diffInDays($today);
+                return $emp;
+            });
+
+        return $this->success([
+            'employees' => $employees,
+            'count'     => $employees->count(),
+            'title'     => 'Employees – Contract Renewal Due',
+            'subtitle'  => 'Contract renewal due within 30 days',
+        ]);
+    }
+
+    /**
+     * Manually trigger the hr:check-probation-contract artisan command
+     * so HR can send the 30-day alerts on demand without waiting for the scheduler.
+     *
+     * POST /api/admin/reports/send-probation-contract-alerts
+     */
+    public function sendProbationContractAlerts(): JsonResponse
+    {
+        Artisan::call('hr:check-probation-contract');
+        $output = trim(Artisan::output());
+
+        return $this->success(
+            ['output' => $output],
+            'Probation and contract renewal alerts have been sent successfully.'
+        );
     }
 }

@@ -25,28 +25,37 @@ class AttendanceRequestApiController extends ApiController
             $query->where('type', $request->type);
         }
 
+        if ($request->filled('search')) {
+            $search = $request->search;
+
+            $query->whereHas('employee', function ($q) use ($search) {
+                $q->where('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhereRaw("CONCAT(first_name, ' ', last_name) LIKE ?", ["%{$search}%"]);
+            });
+        }
+
         $requests = $query->latest()->get();
 
         $requests->transform(function ($request) {
-            $timezone = $request->timezone ?? config('app.timezone', 'Asia/Dubai');
+            $timezone = $request->timezone ?? 'Asia/Dubai';
 
             $tzAbbreviation = match ($timezone) {
-                    'Asia/Kolkata',
-                    'Asia/Calcutta',
-                    'IST',
-                    '+05:30',
-                    'UTC+05:30' => 'IST',
-                    'Asia/Dubai',
-                    'GST',
-                    '+04:00',
-                    'UTC+04:00' => 'GST',
-                    default => Carbon::now($timezone)->format('T'),
-                };
+                'Asia/Kolkata',
+                'Asia/Calcutta',
+                'IST',
+                '+05:30',
+                'UTC+05:30' => 'IST',
+                'Asia/Dubai',
+                'GST',
+                '+04:00',
+                'UTC+04:00' => 'GST',
+                default => Carbon::now($timezone)->format('T'),
+            };
 
-            $request->request_time = $request->request_time
-                ? Carbon::parse($request->request_time)
-                    ->setTimezone($timezone)
-                    ->format('h:i A') . " {$tzAbbreviation}". $request->employee->timezone
+             $request->request_time = $request->request_time
+                ? Carbon::createFromFormat('H:i:s', $request->request_time)
+                ->format('h:i A') . " {$tzAbbreviation}"
                 : '--';
 
             return $request;
@@ -89,6 +98,13 @@ class AttendanceRequestApiController extends ApiController
         ]);
 
         return $this->success($attendanceRequest, 'Attendance request updated successfully.');
+    }
+
+    public function show(AttendanceRequest $attendanceRequest): JsonResponse
+    {
+        $attendanceRequest->load('employee');
+
+        return $this->success($attendanceRequest);
     }
 
     /**
