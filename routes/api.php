@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\Admin\FolderApiController;
 use App\Http\Controllers\Api\Admin\LeaveApiController;
 use App\Http\Controllers\Api\Admin\WfhApiController;
 use App\Http\Controllers\Api\Admin\AttendanceApiController;
+use App\Http\Controllers\Api\Admin\HolidayApiController;
 use App\Http\Controllers\Api\Admin\LeaveTypeApiController;
 use App\Http\Controllers\Api\Admin\ReportApiController;
 use App\Http\Controllers\Api\Admin\TaskReportApiController as AdminTaskReportApiController;
@@ -202,6 +203,9 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
 
     // Task Reports (Admin)
     Route::apiResource('task-reports', AdminTaskReportApiController::class)->middleware('permission:task-reports.read');
+
+    //Holidays
+    Route::apiResource('holidays', HolidayApiController::class)->middleware('permission:settings.read');
 
     // Reports
     Route::group(['prefix' => 'reports', 'middleware' => 'permission:reports.read'], function () {

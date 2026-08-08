@@ -15,6 +15,7 @@ use App\Models\LeaveAllocation;
 use App\Models\Payroll;
 use App\Models\WorkingHour;
 use App\Models\AttendanceRequest;
+use App\Models\Holiday;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -303,7 +304,7 @@ class EmployeePortalApiController extends ApiController
 
                         return $this->error(
                             "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
-                                "A late check-in request has been sent to HR for approval.",
+                            "A late check-in request has been sent to HR for approval.",
                             403
                         );
                     }
@@ -311,7 +312,7 @@ class EmployeePortalApiController extends ApiController
                     // Pending request exists — just inform the employee to wait
                     return $this->error(
                         "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
-                            "Your late check-in request is pending HR approval. Please wait.",
+                        "Your late check-in request is pending HR approval. Please wait.",
                         403
                     );
                 }
@@ -430,7 +431,7 @@ class EmployeePortalApiController extends ApiController
             \Log::warning("Anomalous working hours for user {$user->id}: {$workingHours} minutes (punch_in: {$punchIn}, punch_out: {$now})");
         }
 
-        if ($totalProjectTime > $workingHours) { 
+        if ($totalProjectTime > $workingHours) {
             return $this->error('The total project time cannot exceed the total working hours.', 422);
         }
 
@@ -645,9 +646,12 @@ class EmployeePortalApiController extends ApiController
 
         $durationDays = 0.0;
         $currentDate = $start->copy();
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
 
         while ($currentDate->lte($end)) {
-            if ($currentDate->isSunday()) {
+            if ($currentDate->isSunday() || in_array($currentDate->toDateString(), $holidays)) {
                 $currentDate->addDay();
                 continue;
             }
@@ -785,9 +789,12 @@ class EmployeePortalApiController extends ApiController
 
         $durationDays = 0.0;
         $currentDate = $start->copy();
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
 
         while ($currentDate->lte($end)) {
-            if ($currentDate->isSunday()) {
+            if ($currentDate->isSunday() || in_array($currentDate->toDateString(), $holidays)) {
                 $currentDate->addDay();
                 continue;
             }

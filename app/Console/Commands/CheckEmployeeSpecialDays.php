@@ -49,7 +49,9 @@ class CheckEmployeeSpecialDays extends Command
         }
 
         // Only active employees
-        $employees = Employee::where('status', 'active')->orWhereNull('status')->get();
+        $employees = Employee::whereHas('user', function ($query) {
+            $query->where('status', 'active');
+        })->orWhereNull('user_id')->get();
 
         foreach ($employees as $employee) {
             $fullName = trim($employee->first_name . ' ' . $employee->last_name);

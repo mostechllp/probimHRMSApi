@@ -9,6 +9,7 @@ use App\Models\Employee;
 use App\Models\WorkingHour;
 use App\Models\User;
 use App\Models\AttendanceUpload;
+use App\Models\Holiday;
 use App\Jobs\ProcessAttendanceJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,111 +24,6 @@ class AttendanceApiController extends ApiController
     /**
      * Get Attendance Summary with Stats
      */
-
-    // public function index(Request $request): JsonResponse
-    // {
-    //     $perPage = 100;
-    //     $companyId = $request->get('company_id');
-    //     $employeeName = $request->get('employee_name');
-    //     $datePreset = $request->get('date_preset', 'all');
-
-    //     $query = AttendanceLog::with(['company', 'user.employee', 'user.department'])
-    //         ->select(
-    //             'id',
-    //             'company_id',
-    //             'userid',
-    //             'log_date',
-    //             'working_hours',
-    //             'punch_in_latitude',
-    //             'punch_in_longitude',
-    //             'punch_in_address',
-    //             'punch_out_latitude',
-    //             'punch_out_longitude',
-    //             'punch_out_address',
-    //             'punch_in',
-    //             'punch_out'
-    //         );
-
-    //     if ($companyId) {
-    //         $query->where('company_id', $companyId);
-    //     }
-
-    //     if ($employeeName) {
-    //         $query->whereHas('user.employee', function ($q) use ($employeeName) {
-    //             $q->where('first_name', 'like', "%$employeeName%")
-    //                 ->orWhere('last_name', 'like', "%$employeeName%");
-    //         });
-    //     }
-
-    //     if ($datePreset != 'all') {
-    //         $this->applyDateFilter($query, $datePreset, $request->get('from_date'), $request->get('to_date'));
-    //     }
-
-
-    //     $attendance = $query->groupBy(
-    //         'id',
-    //         'company_id',
-    //         'userid',
-    //         'log_date',
-    //         'working_hours',
-    //         'punch_in_latitude',
-    //         'punch_in_longitude',
-    //         'punch_in_address',
-    //         'punch_out_latitude',
-    //         'punch_out_longitude',
-    //         'punch_out_address',
-    //     )
-    //         ->orderBy('log_date', 'desc')
-    //         ->paginate($perPage);
-
-    //     $attendance->getCollection()->transform(function ($log) {
-    //         $tz = config('app.timezone', 'Asia/Dubai');
-
-    //         // Format date to dd/mm/yyyy
-    //         $log->log_date = $log->log_date
-    //             ? Carbon::parse($log->log_date)->format('d/m/Y')
-    //             : '--';
-
-    //         $log->punch_in = $log->punch_in
-    //             ? Carbon::parse($log->punch_in)->setTimezone($tz)->format('h:i A')
-    //             : '--';
-    //         // Output → "08 Jun 2026, 07:29 AM"
-
-    //         $log->punch_out = $log->punch_out
-    //             ? Carbon::parse($log->punch_out)->setTimezone($tz)->format('h:i A')
-    //             : '--';
-    //         // Output → "08 Jun 2026, 12:32 PM"
-
-    //         // Calculate working_hours dynamically if it is 0 in DB (to fix past data)
-    //         $minutes = $log->working_hours ?? 0;
-
-    //         if ($minutes == 0 && $log->getRawOriginal('punch_in') && $log->getRawOriginal('punch_out')) {
-    //             $in = Carbon::parse($log->getRawOriginal('punch_in'));
-    //             $out = Carbon::parse($log->getRawOriginal('punch_out'));
-    //             $minutes = max(0, $in->diffInMinutes($out));
-    //         }
-
-    //         $hours = intdiv($minutes, 60);
-    //         $mins = $minutes % 60;
-
-    //         if ($minutes == 0)
-    //             $log->working_hours = '--';
-    //         elseif ($hours == 0)
-    //             $log->working_hours = "{$mins} mins";
-    //         elseif ($mins == 0)
-    //             $log->working_hours = "{$hours} hrs";
-    //         else
-    //             $log->working_hours = "{$hours} hrs {$mins} mins";
-
-    //         return $log;
-    //     });
-
-    //     return $this->success([
-    //         'attendance' => $attendance,
-    //         'stats' => $this->getStats()
-    //     ]);
-    // }
-
     public function index(Request $request): JsonResponse
     {
         $dateRange = $request->get('date_range', 'today');
@@ -212,6 +108,9 @@ class AttendanceApiController extends ApiController
 
         // Fetch working hour configuration keyed by lowercase day name
         $workingHours = WorkingHour::all()->keyBy(fn($wh) => strtolower($wh->day));
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
 
         // Attendance logs
         $allLogs = AttendanceLog::whereBetween('log_date', [$startDate, $endDate])
@@ -267,7 +166,11 @@ class AttendanceApiController extends ApiController
                 if ($punchIn) {
                     $status = 'Present';
                 } else {
-                    $status = $currentDate->isSunday() ? 'Weekly Off' : 'Absent';
+                    if (in_array($date, $holidays)) {
+                        $status = 'Holiday';
+                    } else {
+                        $status = $currentDate->isSunday() ? 'Weekly Off' : 'Absent';
+                    }
                 }
 
                 if ($punchIn && $punchOut) {
@@ -341,8 +244,9 @@ class AttendanceApiController extends ApiController
                 'Full Day' => 1,
                 'Half Day' => 2,
                 'Present' => 3,
-                'Weekly Off' => 4,
-                'Absent' => 5,
+                'Holiday' => 4,
+                'Weekly Off' => 5,
+                'Absent' => 6,
             ];
 
             $statusA = $statusOrder[$a['status']] ?? 99;
@@ -402,7 +306,14 @@ class AttendanceApiController extends ApiController
             'punched_out' => ['count' => 0, 'employees' => []],
             'absent' => ['count' => 0, 'employees' => []],
             'late' => ['count' => 0, 'employees' => []],
+            'holiday' => ['count' => 0, 'employees' => []],
         ];
+
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
+
+        $isHoliday = in_array($today, $holidays);
 
         foreach ($employees as $employee) {
             // Need to know what 'userid' in AttendanceLog refers to.
@@ -439,9 +350,15 @@ class AttendanceApiController extends ApiController
                     $result['punched_out']['employees'][] = $empData;
                 }
             } else {
-                // Absent
-                $result['absent']['count']++;
-                $result['absent']['employees'][] = $empData;
+                if ($isHoliday) {
+                    // Holiday
+                    $result['holiday']['count']++;
+                    $result['holiday']['employees'][] = $empData;
+                } else {
+                    // Absent
+                    $result['absent']['count']++;
+                    $result['absent']['employees'][] = $empData;
+                }
             }
         }
 

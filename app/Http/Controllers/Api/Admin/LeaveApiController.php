@@ -8,6 +8,7 @@ use App\Models\LeaveAllocation;
 use App\Models\LeaveApproval;
 use App\Models\LeaveRequest;
 use App\Models\LeaveType;
+use App\Models\Holiday;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -145,9 +146,12 @@ class LeaveApiController extends ApiController
 
         $durationDays = 0.0;
         $currentDate = $start->copy();
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
 
         while ($currentDate->lte($end)) {
-            if ($currentDate->isSunday()) {
+            if ($currentDate->isSunday() || in_array($currentDate->toDateString(), $holidays)) {
                 $currentDate->addDay();
                 continue;
             }
@@ -254,9 +258,12 @@ class LeaveApiController extends ApiController
 
         $durationDays = 0.0;
         $currentDate = $start->copy();
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
 
         while ($currentDate->lte($end)) {
-            if ($currentDate->isSunday()) {
+            if ($currentDate->isSunday() || in_array($currentDate->toDateString(), $holidays)) {
                 $currentDate->addDay();
                 continue;
             }

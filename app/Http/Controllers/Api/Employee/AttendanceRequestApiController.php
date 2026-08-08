@@ -42,7 +42,7 @@ class AttendanceRequestApiController extends ApiController
 
             $request->request_time = $request->request_time
                 ? Carbon::createFromFormat('H:i:s', $request->request_time)
-                ->format('h:i A') . " {$tzAbbreviation}"
+                    ->format('h:i A') . " {$tzAbbreviation}"
                 : '--';
 
             return $request;
@@ -58,7 +58,7 @@ class AttendanceRequestApiController extends ApiController
     {
         $request->validate([
             'type' => 'required|string|in:early_check_in,late_check_in,missed_punch_in,missed_punch_out',
-            'request_date' => 'required|date', // Expecting Y-m-d from API
+            'request_date' => 'required|date',
             'request_time' => 'required',
             'reason' => 'required|string|max:1000',
             'timezone' => 'nullable|string',
@@ -71,6 +71,15 @@ class AttendanceRequestApiController extends ApiController
 
         // Check if date needs conversion if it's not Y-m-d, but usually API should send Y-m-d
         $date = $request->request_date;
+
+        $existingRequest = AttendanceRequest::where('employee_id', $employee->id)
+            ->where('request_date', $date)
+            ->where('type', $request->type)
+            ->first();
+
+        if ($existingRequest) {
+            return $this->error('You have already submitted a request for this date.', 400);
+        }
 
         $attendanceRequest = AttendanceRequest::create([
             'employee_id' => $employee->id,
@@ -94,6 +103,19 @@ class AttendanceRequestApiController extends ApiController
             'timezone' => 'nullable|string',
             'type' => 'required|string'
         ]);
+
+        $exists = AttendanceRequest::where('employee_id', $attendanceRequest->employee_id)
+            ->where('request_date', $request->request_date)
+            ->where('type', $request->type)
+            ->where('id', '!=', $attendanceRequest->id)
+            ->exists();
+
+        if ($exists) {
+            return $this->error(
+                'An attendance request already exists for this date and type.',
+                422
+            );
+        }
 
         $attendanceRequest->update([
             'request_date' => $request->request_date,

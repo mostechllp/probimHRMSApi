@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 use App\Models\TaskReport;
+use App\Models\Holiday;
 use Carbon\Carbon;
 use Maatwebsite\Excel\Facades\Excel;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -305,6 +306,11 @@ class ReportApiController extends ApiController
             ->get()
             ->groupBy(['log_date', 'userid']);
 
+        $holidays = Holiday::whereBetween('holiday_date', [$startDate, $endDate])
+            ->pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
+
         $reportData = [];
 
         foreach ($employees as $employee) {
@@ -376,9 +382,13 @@ class ReportApiController extends ApiController
                 if ($punchIn) {
                     $status = 'Present';
                 } else {
-                    $status = $currentDate->isSunday()
-                        ? 'Weekly Off'
-                        : 'Absent';
+                    if (in_array($date, $holidays)) {
+                        $status = 'Holiday';
+                    } else {
+                        $status = $currentDate->isSunday()
+                            ? 'Weekly Off'
+                            : 'Absent';
+                    }
                 }
 
                 if ($punchIn && $punchOut) {
@@ -1194,6 +1204,9 @@ class ReportApiController extends ApiController
         $userIds = $employees->pluck('user_id')->toArray();
 
         $workingHours = WorkingHour::all()->keyBy(fn($wh) => strtolower($wh->day));
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
 
         $allLogs = AttendanceLog::whereBetween('log_date', [$startDate, $endDate])
             ->whereIn('userid', $userIds)
@@ -1239,10 +1252,15 @@ class ReportApiController extends ApiController
 
                 $workedHours = 0;
                 $overtimeMinutes = 0;
-                $status = $tempDate->isSunday() ? 'Weekly Off' : 'Absent';
-
+                $isHoliday = in_array($dateStr, $holidays);
                 if ($punchIn) {
                     $status = 'Present';
+                } else {
+                    if ($isHoliday) {
+                        $status = 'Holiday';
+                    } else {
+                        $status = $tempDate->isSunday() ? 'Weekly Off' : 'Absent';
+                    }
                 }
 
                 if ($punchIn && $punchOut) {

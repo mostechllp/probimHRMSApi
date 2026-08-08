@@ -20,9 +20,9 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withSchedule(function (\Illuminate\Console\Scheduling\Schedule $schedule) {
-        $schedule->command('documents:check-expiry')->daily();
-        $schedule->command('hr:check-probation-contract')->daily();
-        $schedule->command('hr:check-special-days')->dailyAt('08:00');
+        // $schedule->command('documents:check-expiry')->daily();
+        // $schedule->command('hr:check-probation-contract')->daily();
+        // $schedule->command('hr:check-special-days')->dailyAt('08:00');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Illuminate\Validation\ValidationException $e, $request) {
