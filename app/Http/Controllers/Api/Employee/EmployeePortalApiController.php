@@ -157,6 +157,27 @@ class EmployeePortalApiController extends ApiController
                 ->exists();
         }
 
+        // Project assignments for this employee (project details + assignment details)
+        $projectAssignments = $user->projects()->get()->map(function ($project) {
+            return [
+                'project' => [
+                    'id' => $project->id,
+                    'name' => $project->name,
+                    'description' => $project->description,
+                    'project_manager_id' => $project->project_manager_id,
+                    'team_lead_id' => $project->team_lead_id,
+                    'total_hours' => $project->total_hours,
+                    'total_cost' => $project->total_cost,
+                    'currency' => $project->currency,
+                ],
+                'assignment' => [
+                    'assigned_by' => $project->pivot->assigned_by,
+                    'assigned_at' => $project->pivot->created_at,
+                    'updated_at' => $project->pivot->updated_at,
+                ],
+            ];
+        });
+
         return $this->success([
             'employee' => $user->employee,
             'today_attendance' => [
@@ -188,6 +209,7 @@ class EmployeePortalApiController extends ApiController
             'can_punch' => $canPunch,
             'pending_wfh_count' => WfhRequest::where('employee_id', $employee->id)->where('status', 'pending')->count(),
             'recent_leaves' => LeaveRequest::where('employee_id', $employee->id)->latest()->take(5)->get(),
+            'project_assignments' => $projectAssignments,
         ]);
     }
 
