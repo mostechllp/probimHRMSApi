@@ -7,9 +7,15 @@ use Illuminate\Database\Eloquent\Model;
 class Asset extends Model
 {
     protected $fillable = [
-        'asset_type_id', 'asset_name', 'brand', 'model', 
-        'serial_number', 'purchase_price', 'purchase_date', 
-        'warranty_expiry', 'status'
+        'asset_type_id',
+        'asset_name',
+        'brand',
+        'model',
+        'serial_number',
+        'purchase_price',
+        'purchase_date',
+        'warranty_expiry',
+        'status'
     ];
 
     public function type()

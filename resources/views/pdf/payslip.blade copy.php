@@ -17,7 +17,7 @@
         $yearFull = $payroll->pay_period_year;
 
         $paymentDate = $payroll->updated_at
-            ? $payroll->updated_at->format('d M Y')
+            ? $payroll->updated_at->format('Y-m-d')
             : date('Y-m-d');
 
         $paymentId =
@@ -193,7 +193,7 @@
     <style>
         @page {
             size: A4 portrait;
-            margin: 20mm 6mm;
+            margin: 4mm 6mm;
         }
 
         html,
@@ -207,7 +207,7 @@
         body {
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             font-size: 14px;
-            line-height: 3;
+            line-height: 1.15;
             color: #111827;
         }
 
@@ -219,6 +219,7 @@
             position: relative;
             width: 100%;
             background: #ffffff;
+            border: 1px solid #d1d5db;
             margin: 0;
             padding: 0;
             padding-bottom: 8mm;
@@ -229,7 +230,7 @@
            ========================================= */
 
         .header-accent {
-            height: 10px;
+            height: 3px;
             background: #047857;
         }
 
@@ -263,7 +264,7 @@
             margin: 0;
             padding: 0;
             font-size: 24px;
-            line-height: 2;
+            line-height: 1.1;
             font-weight: bold;
             color: #064e3b;
             text-transform: uppercase;
@@ -272,7 +273,7 @@
         .company-details p {
             margin: 1px 0 0 0;
             padding: 0;
-            font-size: 8px;
+            font-size: 6px;
             color: #6b7280;
         }
 
@@ -280,7 +281,7 @@
             margin: 0;
             padding: 0;
             font-size: 12px;
-            line-height: 2;
+            line-height: 1.1;
             font-weight: bold;
             color: #047857;
         }
@@ -288,7 +289,7 @@
         .doc-title p {
             margin: 1px 0 0 0;
             padding: 0;
-            font-size: 6px;
+            font-size: 5.5px;
             color: #6b7280;
         }
 
@@ -322,7 +323,7 @@
 
         .strip-label {
             display: block;
-            font-size: 8px;
+            font-size: 5.5px;
             line-height: 1.1;
             text-transform: uppercase;
             color: #6b7280;
@@ -333,7 +334,7 @@
             display: block;
             margin-top: 1px;
             font-size: 7.5px;
-            line-height: 2;
+            line-height: 1.1;
             font-weight: bold;
             color: #064e3b;
         }
@@ -359,7 +360,7 @@
 
         .col-title {
             font-size: 12px;
-            line-height: 2;
+            line-height: 1.1;
             font-weight: bold;
             text-transform: uppercase;
             color: #047857;
@@ -371,8 +372,8 @@
         .info-row {
             width: 100%;
             margin-bottom: 2px;
-            font-size: 8px;
-            line-height: 2;
+            font-size: 6.2px;
+            line-height: 1.1;
         }
 
         .info-row:last-child {
@@ -431,8 +432,8 @@
             font-weight: bold;
             text-align: left;
             padding: 4px 6px;
-            font-size: 8px;
-            line-height: 2;
+            font-size: 6.5px;
+            line-height: 1.1;
             border: 1px solid #047857;
         }
 
@@ -445,7 +446,7 @@
             padding: 3.5px 6px;
             border-bottom: 1px solid #e5e7eb;
             color: #111827;
-            line-height: 2;
+            line-height: 1.1;
         }
 
         .salary-table td.amount-col {
@@ -502,15 +503,15 @@
             font-weight: bold;
             text-align: left;
             padding: 4px 6px;
-            font-size: 8px;
-            line-height: 2;
+            font-size: 6.5px;
+            line-height: 1.1;
             border: 1px solid #047857;
         }
 
         .leave-summary-table td {
             padding: 3.5px 6px;
             border-bottom: 1px solid #e5e7eb;
-            line-height: 2;
+            line-height: 1.1;
         }
 
         .leave-summary-table .leave-type {
@@ -585,7 +586,7 @@
             padding: 4px;
             text-align: center;
             font-size: 5.5px;
-            line-height: 2;
+            line-height: 1.1;
             color: #6b7280;
             background: #f9fafb;
         }
@@ -717,11 +718,11 @@
                     <td>
 
                         <span class="strip-label">
-                             Worked Days
+                            Days Worked
                         </span>
 
                         <span class="strip-value">
-                            {{ $totalWorkedDays }} / {{ $working_days }}
+                            {{ $totalWorkedDays }} / {{ $daysInMonth }}
                         </span>
 
                     </td>
@@ -730,7 +731,7 @@
                     <td>
 
                         <span class="strip-label">
-                            Net Disbursement
+                            Net Payable
                         </span>
 
                         <span class="strip-value">
@@ -1118,14 +1119,23 @@
 
                                                 @else
 
-                                                 <tr>
+                                                    <tr>
 
-                                <td colspan="3" style="text-align:center;">
+                                                        <td class="indent-item">
+
                                                             No earnings recorded in this package
-                                </td>
 
-                            </tr>
+                                                        </td>
 
+                                                        <td class="amount-col">
+
+                                                            {{ $package['currency'] }}
+
+                                                            0.00
+
+                                                        </td>
+
+                                                    </tr>
 
                                                 @endif
 
@@ -1155,10 +1165,16 @@
 
                         @else
 
-                         <tr>
+                            <tr>
 
-                                <td colspan="3" style="text-align:center;">
+                                <td class="indent-item">
                                     No earnings recorded
+                                </td>
+
+                                <td class="amount-col">
+
+                                    {{ $currency }} 0.00
+
                                 </td>
 
                             </tr>
@@ -1223,7 +1239,27 @@
                                                 </tr>
 
                             @endforeach
- <!-- Total Deductions -->
+
+                        @else
+
+                            <tr>
+
+                                <td>
+                                    No deductions
+                                </td>
+
+                                <td class="amount-col">
+
+                                    {{ $currency }} 0.00
+
+                                </td>
+
+                            </tr>
+
+                        @endif
+
+
+                        <!-- Total Deductions -->
 
                         <tr class="subtotal-row">
 
@@ -1243,17 +1279,6 @@
                             </td>
 
                         </tr>
-                        @else
-
-                         <tr>
-
-                                <td colspan="3" style="text-align:center;">
-                                    No deductions available
-                                </td>
-
-                            </tr>
-
-                        @endif
 
                     </tbody>
 

@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ApiController;
 use App\Models\Employee;
 use App\Models\User;
 use App\Models\Role;
+use App\Models\EmployeeSalaryPackage;
 use App\Http\Requests\StoreEmployeeRequest;
 use App\Http\Requests\UpdateEmployeeRequest;
 use Illuminate\Http\Request;
@@ -74,6 +75,22 @@ class EmployeeApiController extends ApiController
         unset($data['organization_id'], $data['company_id'], $data['department_id'], $data['designation_id'], $data['status'], $data['type']);
 
         $employee = Employee::create($data);
+
+        foreach ([
+            ['name' => 'Package 1 - Home Country / WFH', 'currency' => 'INR'],
+            ['name' => 'Package 2 - Dubai Onsite', 'currency' => 'AED'],
+        ] as $package) {
+            EmployeeSalaryPackage::firstOrCreate(
+                [
+                    'employee_id' => $employee->id,
+                    'name' => $package['name'],
+                    'currency' => $package['currency'],
+                ],
+                [
+                    'is_active' => $packageData['is_active'] ?? true,
+                ]
+            );
+        }
 
         // Send Email to company email (priority) or personal email
         $recipient = $employee->company_email ?: $employee->personal_email;

@@ -51,7 +51,7 @@ class AssetApiController extends Controller
     {
         $request->validate([
             'asset_name' => 'required|string',
-            'asset_type_id' => 'required|exists:asset_types,id',
+            'asset_type_id' => 'nullable',
         ]);
         $asset = Asset::create($request->all());
         return response()->json($asset, 201);
@@ -92,7 +92,7 @@ class AssetApiController extends Controller
     public function assign(Request $request, $id)
     {
         $asset = Asset::findOrFail($id);
-        $request->validate(['employee_id' => 'required|exists:employees,id', 'assigned_date' => 'required|date']);
+        $request->validate(['employee_id' => 'required|exists:employees,id', 'assigned_date' => 'nullable']);
 
         $asset->update(['status' => 'Assigned']);
         $assignment = AssetAssignment::create([
@@ -131,7 +131,7 @@ class AssetApiController extends Controller
         $assignment->update([
             'status' => 'Returned',
             'returned_date' => $request->returned_date,
-            'return_condition' => $request->return_condition
+            'return_condition' => $request->return_condition ?? null
         ]);
         $asset->update(['status' => 'Available']);
 

@@ -11,14 +11,21 @@ class Offboarding extends Model
 
     protected $fillable = [
         'employee_id',
+        'reporting_manager_id',
         'status',
         'last_working_day',
+        'resignation_date',
         'separation_type',
         'notice_period_days',
         'notice_start_date',
         'visa_sponsorship',
         'nationality',
-        'reason_for_leaving'
+        'reason_for_leaving',
+        'cancellation_status',
+        'cancellation_date',
+        'cancellation_reference',
+        'cancellation_document',
+        'cancellation_remarks',
     ];
 
     public function employee()
@@ -50,5 +57,11 @@ class Offboarding extends Model
     {
         return $this->hasMany(OffboardingLetter::class);
     }
+
+    public function reportingManager()
+    {
+        return $this->belongsTo(Employee::class, 'reporting_manager_id', 'id');
+    }
+
 }
 

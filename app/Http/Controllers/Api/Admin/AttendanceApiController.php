@@ -202,6 +202,7 @@ class AttendanceApiController extends ApiController
                 $reportData[] = [
                     'employee_id' => $employee->employee_id,
                     'name' => trim($employee->first_name . ' ' . $employee->last_name),
+                    'avatar' => $employee->avatar ?? null,
                     'department' => $employee->user->department->name ?? 'N/A',
                     'designation' => $employee->user->designation->name ?? 'N/A',
                     'company' => $employee->user->company->name ?? 'N/A',

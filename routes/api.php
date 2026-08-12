@@ -226,21 +226,32 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::get('employee-probation-ending', [ReportApiController::class, 'employeeProbationEnding']);
         Route::get('employee-contract-renewal', [ReportApiController::class, 'employeeContractRenewal']);
         Route::post('send-probation-contract-alerts', [ReportApiController::class, 'sendProbationContractAlerts']);
+
+        // Project Cost & Time Report
+        Route::get('project-cost-time', [ReportApiController::class, 'projectCostTimeReport']);
     });
 
     // Offboarding Routes
     Route::group(['prefix' => 'offboarding'], function () {
-        Route::get('/', [OffboardingApiController::class, 'index']);
-        Route::post('/initiate', [OffboardingApiController::class, 'initiate']);
-        Route::get('/{id}', [OffboardingApiController::class, 'show']);
-        Route::get('/{id}/visa-status', [OffboardingApiController::class, 'getVisaStatus']);
-        Route::post('/{id}/visa-status/complete', [OffboardingApiController::class, 'completeVisaStatus']);
-        Route::post('/{id}/checklists', [OffboardingApiController::class, 'updateChecklist']);
-        Route::post('/{id}/assets', [OffboardingApiController::class, 'updateAssets']);
-        Route::post('/{id}/interview', [OffboardingApiController::class, 'submitInterview']);
-        Route::post('/{id}/settlement', [OffboardingApiController::class, 'updateSettlement']);
-        Route::post('/{id}/letters', [OffboardingApiController::class, 'generateLetters']);
-        Route::get('/{id}/progress', [OffboardingApiController::class, 'getProgress']);
+        Route::get('/', [OffboardingApiController::class, 'index'])->middleware('permission:offboarding.read');
+        Route::post('/initiate', [OffboardingApiController::class, 'initiate'])->middleware('permission:offboarding.edit');
+        Route::get('/reporting-managers', [OffboardingApiController::class, 'reportingManagers'])->middleware('permission:offboarding.read');
+        Route::get('/employees', [OffboardingApiController::class, 'getAllEmployees'])->middleware('permission:offboarding.read');
+        Route::get('/employees/salary-packages/{id}', [OffboardingApiController::class, 'getSalaryPackages'])->middleware('permission:offboarding.edit');
+        Route::get('/{id}/visa-status', [OffboardingApiController::class, 'getVisaStatus'])->middleware('permission:offboarding.read');
+        Route::post('/{id}/visa-status', [OffboardingApiController::class, 'updateVisaStatus'])->middleware('permission:offboarding.edit');
+        Route::post('/{id}/visa-status/complete', [OffboardingApiController::class, 'completeVisaStatus'])->middleware('permission:offboarding.edit');
+        Route::post('/{id}/checklists', [OffboardingApiController::class, 'updateChecklist'])->middleware('permission:offboarding.edit');
+        Route::post('/{id}/assets', [OffboardingApiController::class, 'updateAssets'])->middleware('permission:offboarding.edit');
+        Route::post('/{id}/interview', [OffboardingApiController::class, 'submitInterview'])->middleware('permission:offboarding.edit');
+        Route::get('/{id}/settlement', [OffboardingApiController::class, 'getSettlement'])->middleware('permission:offboarding.read');
+        Route::post('/{id}/settlement', [OffboardingApiController::class, 'updateSettlement'])->middleware('permission:offboarding.edit');
+        Route::post('/{id}/letters', [OffboardingApiController::class, 'generateLetters'])->middleware('permission:offboarding.edit');
+        Route::post('/{id}/letters/upload', [OffboardingApiController::class, 'uploadLetter'])->middleware('permission:offboarding.edit');
+        Route::post('/{id}/complete', [OffboardingApiController::class, 'completeOffboarding'])->middleware('permission:offboarding.edit');
+        Route::get('/{id}/progress', [OffboardingApiController::class, 'getProgress'])->middleware('permission:offboarding.read');
+        Route::get('/{id}', [OffboardingApiController::class, 'show'])->middleware('permission:offboarding.read');
+        Route::delete('/{id}', [OffboardingApiController::class, 'destroy'])->middleware('permission:offboarding.delete');
     });
 
     //Checklists
@@ -266,12 +277,12 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
 
         Route::get('/', [AssetApiController::class, 'index']);
         Route::post('/', [AssetApiController::class, 'store']);
-        Route::get('/{id}', [AssetApiController::class, 'show']);
-        Route::put('/{id}', [AssetApiController::class, 'update']);
-        Route::delete('/{id}', [AssetApiController::class, 'destroy']);
 
         Route::post('/{id}/assign', [AssetApiController::class, 'assign']);
         Route::post('/{id}/revoke', [AssetApiController::class, 'revoke']);
+        Route::get('/{id}', [AssetApiController::class, 'show']);
+        Route::put('/{id}', [AssetApiController::class, 'update']);
+        Route::delete('/{id}', [AssetApiController::class, 'destroy']);
     });
 
     // Payroll Management (Admin side)
@@ -279,6 +290,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::get('stats', [PayrollController::class, 'stats']);
         Route::get('/', [PayrollController::class, 'index']);
         Route::get('history', [PayrollController::class, 'history']);
+        Route::get('working-days', [PayrollController::class, 'getWorkingDays']);
         Route::get('employee-summary/{employee_id}', [PayrollController::class, 'employeeSalarySummary']);
         Route::get('draft/{employee_id}', [PayrollController::class, 'getDraft']);
         Route::get('{id}/download', [PayrollController::class, 'downloadPayslip']);
@@ -289,6 +301,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::post('summary', [PayrollController::class, 'calculateTotals'])->middleware('permission:payroll.edit');
         Route::post('save-step', [PayrollController::class, 'saveStep'])->middleware('permission:payroll.edit');
         Route::post('submit', [PayrollController::class, 'submitPayroll'])->middleware('permission:payroll.edit');
+        Route::post('generate', [PayrollController::class, 'generatePayroll'])->middleware('permission:payroll.edit');
         Route::post('convert-salary', [PayrollController::class, 'convertSalary'])->middleware('permission:payroll.edit');
         Route::post('{id}/send-payslip', [PayrollController::class, 'sendPayslip'])->middleware('permission:payroll.edit');
         Route::put('{id}', [PayrollController::class, 'update'])->middleware('permission:payroll.edit');

@@ -10,9 +10,14 @@ use App\Models\EmployeeAsset;
 use App\Models\OffboardingInterview;
 use App\Models\OffboardingSettlement;
 use App\Models\OffboardingLetter;
+use App\Models\LeaveAllocation;
+use App\Models\LeaveRequest;
+use App\Models\AttendanceLog;
+use App\Models\Payroll;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use OpenApi\Attributes as OA;
+use Carbon\Carbon;
 
 #[OA\Tag(
     name: 'Offboarding',
@@ -45,7 +50,9 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'data', type: 'object',
+                new OA\Property(
+                    property: 'data',
+                    type: 'object',
                     description: 'Laravel paginated result containing offboarding records'
                 ),
             ]
@@ -54,10 +61,17 @@ class OffboardingApiController extends ApiController
     #[OA\Response(response: 403, description: 'Unauthorized access')]
     public function index(Request $request): JsonResponse
     {
-        $query = Offboarding::with(['employee', 'checklists', 'assets']);
+        $query = Offboarding::with([
+            'employee',
+            'reportingManager',
+            'checklists',
+            'assets'
+        ]);
 
         $user = $request->user();
+
         if ($user->type !== 'admin' && $user->role?->name !== 'HR Manager') {
+
             if ($user->employee) {
                 $query->whereHas('employee', function ($q) use ($user) {
                     $q->where('reporting_manager_id', $user->employee->id);
@@ -89,15 +103,15 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             required: ['employee_id'],
             properties: [
-                new OA\Property(property: 'employee_id',       type: 'integer', example: 2),
-                new OA\Property(property: 'last_working_day',  type: 'string',  format: 'date',    nullable: true, example: '2026-06-10'),
-                new OA\Property(property: 'separation_type',   type: 'string',  nullable: true,    example: 'resignation'),
-                new OA\Property(property: 'notice_period_days',type: 'integer', nullable: true,    example: 30),
-                new OA\Property(property: 'notice_start_date', type: 'string',  format: 'date',    nullable: true, example: '2026-05-10'),
-                new OA\Property(property: 'visa_sponsorship',  type: 'string',  nullable: true,    example: 'Company sponsored'),
-                new OA\Property(property: 'nationality',       type: 'string',  nullable: true,    example: 'British'),
-                new OA\Property(property: 'reason_for_leaving',type: 'string',  nullable: true,    example: 'Better opportunity abroad'),
-                new OA\Property(property: 'is_draft',          type: 'boolean',                    example: false),
+                new OA\Property(property: 'employee_id', type: 'integer', example: 2),
+                new OA\Property(property: 'last_working_day', type: 'string', format: 'date', nullable: true, example: '2026-06-10'),
+                new OA\Property(property: 'separation_type', type: 'string', nullable: true, example: 'resignation'),
+                new OA\Property(property: 'notice_period_days', type: 'integer', nullable: true, example: 30),
+                new OA\Property(property: 'notice_start_date', type: 'string', format: 'date', nullable: true, example: '2026-05-10'),
+                new OA\Property(property: 'visa_sponsorship', type: 'string', nullable: true, example: 'Company sponsored'),
+                new OA\Property(property: 'nationality', type: 'string', nullable: true, example: 'British'),
+                new OA\Property(property: 'reason_for_leaving', type: 'string', nullable: true, example: 'Better opportunity abroad'),
+                new OA\Property(property: 'is_draft', type: 'boolean', example: false),
             ]
         )
     )]
@@ -107,8 +121,8 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Offboarding process initiated successfully.'),
-                new OA\Property(property: 'data',    type: 'object'),
+                new OA\Property(property: 'message', type: 'string', example: 'Offboarding process initiated successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
             ]
         )
     )]
@@ -117,15 +131,17 @@ class OffboardingApiController extends ApiController
     public function initiate(Request $request): JsonResponse
     {
         $request->validate([
-            'employee_id'        => 'required|exists:employees,id',
-            'last_working_day'   => 'nullable|date',
-            'separation_type'    => 'nullable|string',
+            'employee_id' => 'required|exists:employees,id',
+            'reporting_manager_id' => 'required|exists:employees,id',
+            'last_working_day' => 'nullable|date',
+            'separation_type' => 'nullable|string',
+            'resignation_date' => 'nullable|date',
             'notice_period_days' => 'nullable|integer',
-            'notice_start_date'  => 'nullable|date',
-            'visa_sponsorship'   => 'nullable|string',
-            'nationality'        => 'nullable|string',
+            'notice_start_date' => 'nullable|date',
+            'visa_sponsorship' => 'nullable|string',
+            'nationality' => 'nullable|string',
             'reason_for_leaving' => 'nullable|string',
-            'is_draft'           => 'boolean',
+            'is_draft' => 'boolean',
         ]);
 
         $employee = Employee::findOrFail($request->employee_id);
@@ -140,27 +156,79 @@ class OffboardingApiController extends ApiController
         $offboarding = Offboarding::updateOrCreate(
             ['employee_id' => $employee->id],
             [
-                'status'             => $request->boolean('is_draft') 
-                                            ? 'draft' 
-                                            : ($request->visa_sponsorship === 'non-applicable' ? 'pending_checklist' : 'pending_visa'),
-                'last_working_day'   => $request->last_working_day,
-                'separation_type'    => $request->separation_type,
+                'status' => $request->boolean('is_draft')
+                    ? 'draft'
+                    : ($request->visa_sponsorship === 'non-applicable' ? 'pending_checklist' : 'pending_visa'),
+                'last_working_day' => $request->last_working_day,
+                'separation_type' => $request->separation_type,
                 'notice_period_days' => $request->notice_period_days,
-                'notice_start_date'  => $request->notice_start_date,
-                'visa_sponsorship'   => $request->visa_sponsorship,
-                'nationality'        => $request->nationality,
+                'notice_start_date' => $request->notice_start_date,
+                'resignation_date' => $request->resignation_date,
+                'visa_sponsorship' => $request->visa_sponsorship,
+                'nationality' => $request->nationality,
                 'reason_for_leaving' => $request->reason_for_leaving,
+                'reporting_manager_id' => $request->reporting_manager_id,
             ]
         );
 
         return $this->success(
             $offboarding,
             $request->boolean('is_draft')
-                ? 'Offboarding draft saved successfully.'
-                : 'Offboarding process initiated successfully.'
+            ? 'Offboarding draft saved successfully.'
+            : 'Offboarding process initiated successfully.'
         );
     }
 
+    public function reportingManagers(): JsonResponse
+    {
+        $employees = Employee::whereHas('user', function ($query) {
+            $query->whereIn('type', ['manager', 'hr'])->where('status', 'active');
+        })
+            ->with(['user'])
+            ->get()
+            ->map(function ($employee) {
+                return [
+                    'id' => $employee->id,
+                    'user_id' => $employee->user_id,
+                    'employee_id' => $employee->employee_id,
+                    'full_name' => trim(
+                        $employee->first_name . ' ' . $employee->last_name
+                    ),
+                    'user_type' => $employee->user?->type,
+
+                    'department' => $employee->user?->department?->name,
+                    'designation' => $employee->user?->designation?->name,
+                ];
+            });
+
+        return $this->success($employees);
+    }
+
+    public function getAllEmployees(): JsonResponse
+    {
+        $employees = Employee::whereHas('user', function ($query) {
+            $query->where('type', '!=', 'admin')->where('status', 'active');
+        })
+            ->with(['user'])
+            ->get()
+            ->map(function ($employee) {
+                return [
+                    'id' => $employee->id,
+                    'user_id' => $employee->user_id,
+                    'employee_id' => $employee->employee_id,
+                    'full_name' => trim(
+                        $employee->first_name . ' ' . $employee->last_name
+                    ),
+                    'user_type' => $employee->user?->type,
+
+                    'department' => $employee->user?->department?->name,
+                    'designation' => $employee->user?->designation?->name,
+                    'email' => $employee->personal_email,
+                ];
+            });
+
+        return $this->success($employees);
+    }
     // -------------------------------------------------------------------------
     // SHOW
     // -------------------------------------------------------------------------
@@ -186,8 +254,8 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Offboarding details retrieved successfully.'),
-                new OA\Property(property: 'data',    type: 'object'),
+                new OA\Property(property: 'message', type: 'string', example: 'Offboarding details retrieved successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
             ]
         )
     )]
@@ -246,7 +314,7 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Visa cancellation details fetched successfully.'),
+                new OA\Property(property: 'message', type: 'string', example: 'Visa cancellation details fetched successfully.'),
                 new OA\Property(
                     property: 'data',
                     type: 'object',
@@ -256,21 +324,21 @@ class OffboardingApiController extends ApiController
                             property: 'employee',
                             type: 'object',
                             properties: [
-                                new OA\Property(property: 'id',            type: 'integer', example: 2),
-                                new OA\Property(property: 'name',          type: 'string',  example: 'Dr. Vipul Paul Thomas'),
-                                new OA\Property(property: 'employee_code', type: 'string',  example: 'MSC-DOC-0002'),
+                                new OA\Property(property: 'id', type: 'integer', example: 2),
+                                new OA\Property(property: 'name', type: 'string', example: 'Dr. Vipul Paul Thomas'),
+                                new OA\Property(property: 'employee_code', type: 'string', example: 'MSC-DOC-0002'),
                             ]
                         ),
                         new OA\Property(
                             property: 'visa_details',
                             type: 'object',
                             properties: [
-                                new OA\Property(property: 'visa_number',          type: 'string',          example: '98765432111'),
-                                new OA\Property(property: 'visa_expiry_date',     type: 'string', format: 'date', example: '2026-06-30'),
-                                new OA\Property(property: 'eid_number',           type: 'string',          example: '768-7679277893-88'),
-                                new OA\Property(property: 'eid_expiry_date',      type: 'string', format: 'date', example: '2026-07-02'),
-                                new OA\Property(property: 'labor_number',         type: 'string', nullable: true, example: null),
-                                new OA\Property(property: 'visa_type',            type: 'string',          example: 'company_visa'),
+                                new OA\Property(property: 'visa_number', type: 'string', example: '98765432111'),
+                                new OA\Property(property: 'visa_expiry_date', type: 'string', format: 'date', example: '2026-06-30'),
+                                new OA\Property(property: 'eid_number', type: 'string', example: '768-7679277893-88'),
+                                new OA\Property(property: 'eid_expiry_date', type: 'string', format: 'date', example: '2026-07-02'),
+                                new OA\Property(property: 'labor_number', type: 'string', nullable: true, example: null),
+                                new OA\Property(property: 'visa_type', type: 'string', example: 'company_visa'),
                             ]
                         ),
                         new OA\Property(
@@ -279,10 +347,10 @@ class OffboardingApiController extends ApiController
                             items: new OA\Items(
                                 type: 'object',
                                 properties: [
-                                    new OA\Property(property: 'id',               type: 'integer', example: 1),
-                                    new OA\Property(property: 'task_name',        type: 'string',  example: 'Submit visa cancellation to GDRFA/ICP'),
-                                    new OA\Property(property: 'status',           type: 'string',  example: 'pending'),
-                                    new OA\Property(property: 'responsible_role', type: 'string',  example: 'PRO'),
+                                    new OA\Property(property: 'id', type: 'integer', example: 1),
+                                    new OA\Property(property: 'task_name', type: 'string', example: 'Submit visa cancellation to GDRFA/ICP'),
+                                    new OA\Property(property: 'status', type: 'string', example: 'pending'),
+                                    new OA\Property(property: 'responsible_role', type: 'string', example: 'PRO'),
                                 ]
                             )
                         ),
@@ -313,30 +381,141 @@ class OffboardingApiController extends ApiController
         }
 
         $employee = $offboarding->employee;
-        $tasks    = $offboarding->checklists;
+        $tasks = $offboarding->checklists;
 
-        $totalTasks     = $tasks->count();
+        $totalTasks = $tasks->count();
         $completedTasks = $tasks->where('status', 'completed')->count();
-        $progress       = $totalTasks > 0 ? round(($completedTasks / $totalTasks) * 100) : 0;
+        $progress = $totalTasks > 0 ? round(($completedTasks / $totalTasks) * 100) : 0;
 
         return $this->success([
             'offboarding_id' => $offboarding->id,
-            'employee'       => [
-                'id'            => $employee->id,
-                'name'          => trim("{$employee->first_name} {$employee->last_name}"),
+            'employee' => [
+                'id' => $employee->id,
+                'name' => trim("{$employee->first_name} {$employee->last_name}"),
                 'employee_code' => $employee->employee_id,
             ],
-            'visa_details'   => [
-                'visa_number'      => $employee->visa_number,
+            'visa_details' => [
+                'visa_number' => $employee->visa_number,
                 'visa_expiry_date' => $employee->visa_expiry_date,    // fixed: was visa_expiry
-                'eid_number'       => $employee->eid_number,           // fixed: was emirates_id_number
-                'eid_expiry_date'  => $employee->eid_expiry_date,      // fixed: was emirates_id_expiry
-                'labor_number'     => $employee->labor_number,         // fixed: was labour_card_number
-                'visa_type'        => $employee->visa_type,
+                'eid_number' => $employee->eid_number,           // fixed: was emirates_id_number
+                'eid_expiry_date' => $employee->eid_expiry_date,      // fixed: was emirates_id_expiry
+                'labor_number' => $employee->labor_number,         // fixed: was labour_card_number
+                'visa_type' => $employee->visa_type,
             ],
-            'tasks'    => $tasks,
+            'cancellation' => [
+                'status' => $offboarding->cancellation_status,
+                'date' => $offboarding->cancellation_date,
+                'reference' => $offboarding->cancellation_reference,
+                'document' => $offboarding->cancellation_document,
+                'remarks' => $offboarding->cancellation_remarks,
+            ],
+            'tasks' => $tasks,
             'progress' => $progress,
         ], 'Visa cancellation details fetched successfully.');
+    }
+
+    // -------------------------------------------------------------------------
+    // UPDATE VISA STATUS (cancellation details)
+    // -------------------------------------------------------------------------
+
+    #[OA\Post(
+        path: '/api/admin/offboarding/{id}/visa-status',
+        operationId: 'updateVisaStatus',
+        summary: 'Save visa cancellation details',
+        description: 'Stores the cancellation status, date, reference number, supporting document, and remarks for the visa cancellation stage.',
+        security: [['bearerAuth' => []]],
+        tags: ['Offboarding']
+    )]
+    #[OA\Parameter(
+        name: 'id',
+        in: 'path',
+        required: true,
+        description: 'Offboarding ID',
+        schema: new OA\Schema(type: 'integer', example: 1)
+    )]
+    #[OA\RequestBody(
+        required: true,
+        content: new OA\MediaType(
+            mediaType: 'multipart/form-data',
+            schema: new OA\Schema(
+                properties: [
+                    new OA\Property(
+                        property: 'cancellation_status',
+                        type: 'string',
+                        enum: ['pending', 'in_progress', 'completed', 'not_required'],
+                        example: 'pending'
+                    ),
+                    new OA\Property(property: 'cancellation_date', type: 'string', format: 'date', nullable: true, example: '2026-08-20'),
+                    new OA\Property(property: 'cancellation_reference', type: 'string', nullable: true, example: 'MOHRE-1234567'),
+                    new OA\Property(property: 'cancellation_document', type: 'string', format: 'binary', nullable: true),
+                    new OA\Property(property: 'cancellation_remarks', type: 'string', nullable: true, example: 'Submitted to GDRFA'),
+                ]
+            )
+        )
+    )]
+    #[OA\Response(
+        response: 200,
+        description: 'Visa cancellation details updated successfully',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'success', type: 'boolean', example: true),
+                new OA\Property(property: 'message', type: 'string', example: 'Visa cancellation details updated successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
+            ]
+        )
+    )]
+    #[OA\Response(response: 403, description: 'Unauthorized')]
+    #[OA\Response(response: 404, description: 'Offboarding record not found')]
+    #[OA\Response(response: 422, description: 'Validation error')]
+    public function updateVisaStatus(Request $request, $id): JsonResponse
+    {
+        $request->validate([
+            'cancellation_status' => 'nullable|in:pending,in_progress,completed,not_required',
+            'cancellation_date' => 'nullable|date',
+            'cancellation_reference' => 'nullable|string|max:255',
+            'cancellation_document' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
+            'cancellation_remarks' => 'nullable|string',
+        ]);
+
+        $offboarding = Offboarding::find($id);
+
+        if (!$offboarding) {
+            return $this->error('Offboarding record not found.', 404);
+        }
+
+        if (!$this->isAuthorized($request->user(), $offboarding->employee)) {
+            return $this->error(
+                'You are not authorized to update visa cancellation for this employee.',
+                403
+            );
+        }
+
+        $data = $request->only([
+            'cancellation_status',
+            'cancellation_date',
+            'cancellation_reference',
+            'cancellation_remarks',
+        ]);
+
+        // Handle optional file upload
+        if ($request->hasFile('cancellation_document')) {
+            $path = $request->file('cancellation_document')
+                ->store('offboarding/visa-cancellation', 'public');
+            $data['cancellation_document'] = $path;
+        }
+
+        $offboarding->update($data);
+
+        return $this->success(
+            $offboarding->fresh(),
+            'Visa cancellation details updated successfully.'
+        );
+    }
+
+    public function getSalaryPackages($id): JsonResponse
+    {
+        $employee = Employee::with('salaryPackages.salaryComponents')->findOrFail($id);
+        return $this->success($employee, 'Salary packages fetched successfully.');
     }
 
     // -------------------------------------------------------------------------
@@ -364,8 +543,8 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Visa cancellation process completed successfully.'),
-                new OA\Property(property: 'data',    type: 'object',  nullable: true, example: null),
+                new OA\Property(property: 'message', type: 'string', example: 'Visa cancellation process completed successfully.'),
+                new OA\Property(property: 'data', type: 'object', nullable: true, example: null),
             ]
         )
     )]
@@ -375,7 +554,7 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: false),
-                new OA\Property(property: 'message', type: 'string',  example: 'All visa cancellation tasks must be completed before proceeding.'),
+                new OA\Property(property: 'message', type: 'string', example: 'All visa cancellation tasks must be completed before proceeding.'),
             ]
         )
     )]
@@ -384,7 +563,7 @@ class OffboardingApiController extends ApiController
     public function completeVisaStatus(Request $request, $id): JsonResponse
     {
         $offboarding = Offboarding::with([
-            'checklists' => fn ($q) => $q->where('category_id', 'visa_cancellation'),
+            'checklists' => fn($q) => $q->where('category_id', 'visa_cancellation'),
         ])->find($id);
 
         if (!$offboarding) {
@@ -454,16 +633,16 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Checklist item updated successfully.'),
+                new OA\Property(property: 'message', type: 'string', example: 'Checklist item updated successfully.'),
                 new OA\Property(
                     property: 'data',
                     type: 'object',
                     properties: [
-                        new OA\Property(property: 'id',             type: 'integer', example: 5),
+                        new OA\Property(property: 'id', type: 'integer', example: 5),
                         new OA\Property(property: 'offboarding_id', type: 'integer', example: 1),
-                        new OA\Property(property: 'category_id',       type: 'string',  example: 'general'),
-                        new OA\Property(property: 'task_name',      type: 'string',  example: 'Return access card'),
-                        new OA\Property(property: 'status',         type: 'string',  example: 'completed'),
+                        new OA\Property(property: 'category_id', type: 'string', example: 'general'),
+                        new OA\Property(property: 'task_name', type: 'string', example: 'Return access card'),
+                        new OA\Property(property: 'status', type: 'string', example: 'completed'),
                     ]
                 ),
             ]
@@ -475,8 +654,8 @@ class OffboardingApiController extends ApiController
     public function updateChecklist(Request $request, $id): JsonResponse
     {
         $request->validate([
-            'task_id' => 'required|exists:offboarding_checklists,id',
-            'status'  => 'required|in:pending,completed,not_applicable',
+            'task_id' => 'nullable|exists:offboarding_checklists,id',
+            'status' => 'required|in:pending,completed,not_applicable',
         ]);
 
         $offboarding = Offboarding::find($id);
@@ -535,9 +714,9 @@ class OffboardingApiController extends ApiController
                     items: new OA\Items(
                         required: ['id', 'status'],
                         properties: [
-                            new OA\Property(property: 'id',        type: 'integer', example: 3),
-                            new OA\Property(property: 'status',    type: 'string',  example: 'Returned'),
-                            new OA\Property(property: 'condition', type: 'string',  nullable: true, example: 'Good'),
+                            new OA\Property(property: 'id', type: 'integer', example: 3),
+                            new OA\Property(property: 'status', type: 'string', example: 'Returned'),
+                            new OA\Property(property: 'condition', type: 'string', nullable: true, example: 'Good'),
                         ]
                     )
                 ),
@@ -550,8 +729,8 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Assets updated successfully.'),
-                new OA\Property(property: 'data',    type: 'object'),
+                new OA\Property(property: 'message', type: 'string', example: 'Assets updated successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
             ]
         )
     )]
@@ -573,7 +752,7 @@ class OffboardingApiController extends ApiController
             EmployeeAsset::where('id', $asset['id'])
                 ->where('offboarding_id', $offboarding->id)
                 ->update([
-                    'status'    => $asset['status'],
+                    'status' => $asset['status'],
                     'condition' => $asset['condition'] ?? null,
                 ]);
         }
@@ -607,16 +786,17 @@ class OffboardingApiController extends ApiController
         required: true,
         content: new OA\JsonContent(
             properties: [
-                new OA\Property(property: 'interviewer',                  type: 'string',  example: 'Fatima Al Zaabi (HR)'),
-                new OA\Property(property: 'interview_date',               type: 'string',  format: 'date', example: '2026-06-17'),
-                new OA\Property(property: 'interview_mode',               type: 'string',  example: 'In person'),
-                new OA\Property(property: 'overall_satisfaction',         type: 'string',  example: 'Satisfied'),
-                new OA\Property(property: 'primary_reason',               type: 'string',  example: 'Better opportunity'),
-                new OA\Property(property: 'work_life_rating',             type: 'string',  nullable: true, example: '4'),
-                new OA\Property(property: 'manager_relationship_rating',  type: 'string',  nullable: true, example: '5'),
-                new OA\Property(property: 'enjoyed_most',                 type: 'string',  nullable: true, example: 'Collaborative team culture'),
-                new OA\Property(property: 'areas_for_improvement',        type: 'string',  nullable: true, example: 'Clearer promotion paths'),
-                new OA\Property(property: 'would_recommend',              type: 'boolean',                  example: true),
+                new OA\Property(property: 'interviewer', type: 'string', example: 'Fatima Al Zaabi (HR)'),
+                new OA\Property(property: 'interview_date', type: 'string', format: 'date', example: '2026-06-17'),
+                new OA\Property(property: 'interview_mode', type: 'string', example: 'In person'),
+                new OA\Property(property: 'overall_satisfaction', type: 'string', example: 'Satisfied'),
+                new OA\Property(property: 'primary_reason', type: 'string', example: 'Better opportunity'),
+                new OA\Property(property: 'work_life_rating', type: 'string', nullable: true, example: '4'),
+                new OA\Property(property: 'manager_relationship_rating', type: 'string', nullable: true, example: '5'),
+                new OA\Property(property: 'enjoyed_most', type: 'string', nullable: true, example: 'Collaborative team culture'),
+                new OA\Property(property: 'areas_for_improvement', type: 'string', nullable: true, example: 'Clearer promotion paths'),
+                new OA\Property(property: 'would_recommend', type: 'boolean', example: true),
+                new OA\Property(property: 'additional_comments', type: 'string', nullable: true, example: 'Would consider rejoining in the future.'),
             ]
         )
     )]
@@ -626,8 +806,8 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Exit interview submitted successfully.'),
-                new OA\Property(property: 'data',    type: 'object'),
+                new OA\Property(property: 'message', type: 'string', example: 'Exit interview submitted successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
             ]
         )
     )]
@@ -658,6 +838,7 @@ class OffboardingApiController extends ApiController
                 'enjoyed_most',
                 'areas_for_improvement',
                 'would_recommend',
+                'additional_comments'
             ])
         );
 
@@ -665,8 +846,265 @@ class OffboardingApiController extends ApiController
     }
 
     // -------------------------------------------------------------------------
+    // GET SETTLEMENT
+    // -------------------------------------------------------------------------
+
+    #[OA\Get(
+        path: '/api/admin/offboarding/{id}/settlement',
+        operationId: 'getSettlement',
+        summary: 'Get the final settlement for an offboarding record',
+        description: 'Returns the final settlement record (total payable, deductions, net payable, status, and remarks), the calculated leave encashment, and the employee\'s salary packages (with their salary components) for the given offboarding ID. Returns null settlement if none has been created yet.',
+        security: [['bearerAuth' => []]],
+        tags: ['Offboarding']
+    )]
+    #[OA\Parameter(
+        name: 'id',
+        in: 'path',
+        required: true,
+        description: 'Offboarding ID',
+        schema: new OA\Schema(type: 'integer', example: 1)
+    )]
+    #[OA\Response(
+        response: 200,
+        description: 'Settlement fetched successfully',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'success', type: 'boolean', example: true),
+                new OA\Property(property: 'message', type: 'string', example: 'Settlement fetched successfully.'),
+                new OA\Property(
+                    property: 'data',
+                    type: 'object',
+                    nullable: true,
+                    properties: [
+                        new OA\Property(property: 'id', type: 'integer', example: 1),
+                        new OA\Property(property: 'offboarding_id', type: 'integer', example: 3),
+                        new OA\Property(property: 'total_payable', type: 'number', format: 'float', example: 45000.00),
+                        new OA\Property(property: 'total_deductions', type: 'number', format: 'float', example: 2000.00),
+                        new OA\Property(property: 'net_payable', type: 'number', format: 'float', example: 43000.00),
+                        new OA\Property(property: 'status', type: 'string', example: 'pending'),
+                        new OA\Property(property: 'remarks', type: 'string', nullable: true),
+                    ]
+                ),
+                new OA\Property(
+                    property: 'calculated_settlement',
+                    type: 'object',
+                    description: 'Everything that can be auto-derived for the final settlement. Deductions default to 0.',
+                    properties: [
+                        new OA\Property(property: 'employee', type: 'object'),
+                        new OA\Property(property: 'salary', type: 'object'),
+                        new OA\Property(property: 'service_period', type: 'object', nullable: true),
+                        new OA\Property(property: 'attendance', type: 'object'),
+                        new OA\Property(property: 'leave', type: 'object'),
+                        new OA\Property(property: 'leave_encashment', type: 'object'),
+                        new OA\Property(property: 'gratuity', type: 'object'),
+                        new OA\Property(property: 'overtime', type: 'object'),
+                        new OA\Property(property: 'notice_period', type: 'object'),
+                        new OA\Property(property: 'total_payable', type: 'number', format: 'float', example: 45000.00),
+                        new OA\Property(property: 'total_deductions', type: 'number', format: 'float', example: 0.00),
+                        new OA\Property(property: 'net_payable', type: 'number', format: 'float', example: 45000.00),
+                    ]
+                ),
+                new OA\Property(
+                    property: 'salary_packages',
+                    type: 'array',
+                    items: new OA\Items(type: 'object')
+                ),
+            ]
+        )
+    )]
+    #[OA\Response(response: 403, description: 'Unauthorized')]
+    #[OA\Response(response: 404, description: 'Offboarding record not found')]
+    public function getSettlement(Request $request, $id): JsonResponse
+    {
+        $offboarding = Offboarding::with([
+            'employee.user.designation',
+            'employee.user.department',
+            'employee.salaryPackages.salaryComponents',
+            'settlement',
+        ])->find($id);
+
+        if (!$offboarding) {
+            return $this->error('Offboarding record not found.', 404);
+        }
+
+        if (!$this->isAuthorized($request->user(), $offboarding->employee)) {
+            return $this->error('Unauthorized access', 403);
+        }
+
+        $employee = $offboarding->employee;
+        $salaryPackages = $employee->salaryPackages;
+
+        $joiningDate = $employee->joining_date ? Carbon::parse($employee->joining_date) : null;
+        $lastWorkingDay = $offboarding->last_working_day ? Carbon::parse($offboarding->last_working_day) : null;
+        $settlementYear = $lastWorkingDay ? $lastWorkingDay->format('Y') : now()->format('Y');
+
+        // ── Salary: basic + gross from the employee's active salary package(s) ──
+        $activePackages = $salaryPackages->where('is_active', true);
+        $packagesForSalary = $activePackages->isEmpty() ? $salaryPackages : $activePackages;
+
+        $grossSalary = $packagesForSalary->reduce(function ($carry, $package) {
+            return $carry + $package->salaryComponents->sum(fn($component) => (float) $component->value);
+        }, 0.0);
+
+        $basicSalary = $packagesForSalary->reduce(function ($carry, $package) {
+            $basicComponent = $package->salaryComponents->first(
+                fn($component) => stripos($component->component_name, 'basic') !== false
+            );
+            return $carry + ($basicComponent ? (float) $basicComponent->value : 0.0);
+        }, 0.0);
+
+        // ── Service period ──
+        $servicePeriod = null;
+        $serviceYears = 0.0;
+        if ($joiningDate && $lastWorkingDay) {
+            $totalDays = $joiningDate->diffInDays($lastWorkingDay);
+            $diff = $joiningDate->diff($lastWorkingDay);
+            $serviceYears = round($totalDays / 365, 2);
+
+            $servicePeriod = [
+                'years' => $diff->y,
+                'months' => $diff->m,
+                'days' => $diff->d,
+                'total_days' => $totalDays,
+                'total_years' => $serviceYears,
+            ];
+        }
+
+        // ── Working days vs. days worked in the final (exit) month ──
+        $workingDays = 0;
+        $daysWorked = 0;
+        if ($lastWorkingDay) {
+            $periodStart = $lastWorkingDay->copy()->startOfMonth();
+            if ($joiningDate && $joiningDate->gt($periodStart)) {
+                $periodStart = $joiningDate->copy();
+            }
+
+            $workingDays = max(1, $periodStart->diffInWeekdays($lastWorkingDay) + 1);
+
+            $daysWorked = AttendanceLog::where('userid', $employee->user_id)
+                ->whereBetween('log_date', [$periodStart->toDateString(), $lastWorkingDay->toDateString()])
+                ->where('log_status', 'out')
+                ->count();
+        }
+
+        // ── Leave: allocation, taken, unpaid leave, balance ──
+        $leaveAllocated = LeaveAllocation::where('employee_id', $employee->id)
+            ->where('year', $settlementYear)
+            ->sum('allocated_days');
+
+        $leaveTaken = LeaveRequest::where('employee_id', $employee->id)
+            ->where('status', 'approved')
+            ->sum('duration_days');
+
+        $unpaidLeaveDays = LeaveRequest::where('employee_id', $employee->id)
+            ->where('status', 'approved')
+            ->where('claim_salary', false)
+            ->sum('duration_days');
+
+        $leaveBalanceDays = max(0, $leaveAllocated - $leaveTaken);
+
+        // ── Leave encashment ──
+        $perDaySalary = $grossSalary / 30;
+        $leaveEncashmentAmount = round($perDaySalary * $leaveBalanceDays, 2);
+
+        // ── Gratuity (UAE labour law: 21 days/year up to 5 years, 30 days/year beyond, capped at 2 years' basic pay) ──
+        $gratuityDays = 0.0;
+        if ($serviceYears >= 1) {
+            $gratuityDays = $serviceYears <= 5
+                ? 21 * $serviceYears
+                : (21 * 5) + (30 * ($serviceYears - 5));
+        }
+        $dailyBasicSalary = $basicSalary / 30;
+        $gratuityAmount = round($dailyBasicSalary * $gratuityDays, 2);
+        $gratuityCap = round($basicSalary * 24, 2);
+        if ($gratuityCap > 0) {
+            $gratuityAmount = min($gratuityAmount, $gratuityCap);
+        }
+
+        // ── Overtime owed: sum from payroll records not yet completed ──
+        $overtimeAmount = (float) Payroll::where('user_id', $employee->user_id)
+            ->where('status', '!=', 'completed')
+            ->sum('overtime');
+
+        // ── Notice period ──
+        $noticePeriodDays = $offboarding->notice_period_days;
+        $noticeStartDate = $offboarding->notice_start_date ? Carbon::parse($offboarding->notice_start_date) : null;
+        $noticeEndDate = ($noticeStartDate && $noticePeriodDays)
+            ? $noticeStartDate->copy()->addDays($noticePeriodDays)->toDateString()
+            : null;
+        $noticeDaysServed = ($noticeStartDate && $lastWorkingDay)
+            ? max(0, $noticeStartDate->diffInDays($lastWorkingDay) + 1)
+            : null;
+        $noticeShortfallDays = ($noticePeriodDays !== null && $noticeDaysServed !== null)
+            ? max(0, $noticePeriodDays - $noticeDaysServed)
+            : null;
+
+        // ── Totals (deductions default to 0) ──
+        $totalDeductions = 0.0;
+        $totalPayable = round($leaveEncashmentAmount + $gratuityAmount + $overtimeAmount, 2);
+        $netPayable = round($totalPayable - $totalDeductions, 2);
+
+        return $this->success([
+            'settlement' => $offboarding->settlement,
+            'calculated_settlement' => [
+                'employee' => [
+                    'id' => $employee->id,
+                    'employee_id' => $employee->employee_id,
+                    'name' => trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? '')),
+                    'designation' => $employee->user->designation->name ?? null,
+                    'department' => $employee->user->department->name ?? null,
+                    'joining_date' => $employee->joining_date,
+                    'last_working_day' => $offboarding->last_working_day,
+                ],
+                'salary' => [
+                    'basic_salary' => round($basicSalary, 2),
+                    'gross_salary' => round($grossSalary, 2),
+                    'per_day_salary' => round($perDaySalary, 2),
+                ],
+                'service_period' => $servicePeriod,
+                'attendance' => [
+                    'working_days' => $workingDays,
+                    'days_worked' => $daysWorked,
+                ],
+                'leave' => [
+                    'leave_allocated' => (float) $leaveAllocated,
+                    'leave_taken' => (float) $leaveTaken,
+                    'unpaid_leave_days' => (float) $unpaidLeaveDays,
+                    'leave_balance_days' => (float) $leaveBalanceDays,
+                ],
+                'leave_encashment' => [
+                    'per_day_salary' => round($perDaySalary, 2),
+                    'leave_balance_days' => (float) $leaveBalanceDays,
+                    'amount' => $leaveEncashmentAmount,
+                ],
+                'gratuity' => [
+                    'eligible_service_years' => $serviceYears,
+                    'gratuity_days' => round($gratuityDays, 2),
+                    'daily_basic_salary' => round($dailyBasicSalary, 2),
+                    'amount' => $gratuityAmount,
+                ],
+                'overtime' => [
+                    'amount' => round($overtimeAmount, 2),
+                ],
+                'notice_period' => [
+                    'notice_period_days' => $noticePeriodDays,
+                    'notice_start_date' => $offboarding->notice_start_date,
+                    'notice_end_date' => $noticeEndDate,
+                    'days_served' => $noticeDaysServed,
+                    'shortfall_days' => $noticeShortfallDays,
+                ],
+                'total_payable' => $totalPayable,
+                'total_deductions' => $totalDeductions,
+                'net_payable' => $netPayable,
+            ],
+            'salary_packages' => $salaryPackages,
+        ], 'Settlement fetched successfully.');
+    }
+
+    // -------------------------------------------------------------------------
     // UPDATE SETTLEMENT
     // -------------------------------------------------------------------------
+
 
     #[OA\Patch(
         path: '/api/admin/offboarding/{id}/settlement',
@@ -687,11 +1125,11 @@ class OffboardingApiController extends ApiController
         required: true,
         content: new OA\JsonContent(
             properties: [
-                new OA\Property(property: 'total_payable',    type: 'number', format: 'float', example: 45000.00),
+                new OA\Property(property: 'total_payable', type: 'number', format: 'float', example: 45000.00),
                 new OA\Property(property: 'total_deductions', type: 'number', format: 'float', example: 2000.00),
-                new OA\Property(property: 'net_payable',      type: 'number', format: 'float', example: 43000.00),
-                new OA\Property(property: 'status',           type: 'string',                  example: 'pending'),
-                new OA\Property(property: 'remarks',          type: 'string', nullable: true,  example: 'Includes gratuity and leave encashment'),
+                new OA\Property(property: 'net_payable', type: 'number', format: 'float', example: 43000.00),
+                new OA\Property(property: 'status', type: 'string', example: 'pending'),
+                new OA\Property(property: 'remarks', type: 'string', nullable: true, example: 'Includes gratuity and leave encashment'),
             ]
         )
     )]
@@ -701,8 +1139,8 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Settlement updated successfully.'),
-                new OA\Property(property: 'data',    type: 'object'),
+                new OA\Property(property: 'message', type: 'string', example: 'Settlement updated successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
             ]
         )
     )]
@@ -752,9 +1190,9 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             required: ['letter_type'],
             properties: [
-                new OA\Property(property: 'letter_type',   type: 'string', example: 'experience_letter'),
+                new OA\Property(property: 'letter_type', type: 'string', example: 'experience_letter'),
                 new OA\Property(property: 'document_path', type: 'string', nullable: true, example: 'letters/exp_letter_emp2.pdf'),
-                new OA\Property(property: 'status',        type: 'string', example: 'pending'),
+                new OA\Property(property: 'status', type: 'string', example: 'pending'),
             ]
         )
     )]
@@ -764,8 +1202,8 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Letter record updated successfully.'),
-                new OA\Property(property: 'data',    type: 'object'),
+                new OA\Property(property: 'message', type: 'string', example: 'Letter record updated successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
             ]
         )
     )]
@@ -773,6 +1211,160 @@ class OffboardingApiController extends ApiController
     #[OA\Response(response: 404, description: 'Offboarding record not found')]
     public function generateLetters(Request $request, $id): JsonResponse
     {
+        $request->validate([
+            'letter_type' => 'required|string|in:experience_letter,noc,relieving_letter,final_settlement,resignation_acceptance',
+            'status' => 'nullable|string',
+        ]);
+
+        $offboarding = Offboarding::with([
+            'employee.user.designation',
+            'employee.user.department',
+            'reportingManager.user.designation',
+            'settlement',
+        ])->find($id);
+
+        if (!$offboarding) {
+            return $this->error('Offboarding record not found.', 404);
+        }
+
+        if (!$this->isAuthorized($request->user(), $offboarding->employee)) {
+            return $this->error('Unauthorized access', 403);
+        }
+
+        $letterType = $request->input('letter_type');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Map letter_type → Blade view
+        |--------------------------------------------------------------------------
+        */
+        $viewMap = [
+            'experience_letter' => 'pdf.offboarding.experience_letter',
+            'noc' => 'pdf.offboarding.noc',
+            'relieving_letter' => 'pdf.offboarding.relieving_letter',
+            'final_settlement' => 'pdf.offboarding.final_settlement',
+            'resignation_acceptance' => 'pdf.offboarding.resignation_acceptance',
+        ];
+
+        $view = $viewMap[$letterType] ?? null;
+
+        if (!$view || !view()->exists($view)) {
+            return $this->error("Template not found for letter type: {$letterType}", 500);
+        }
+
+        try {
+            /*
+            |----------------------------------------------------------------------
+            | Generate PDF
+            |----------------------------------------------------------------------
+            */
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView($view, [
+                'offboarding' => $offboarding,
+            ])->setPaper('a4', 'portrait');
+
+            $pdf->setOption('isHtml5ParserEnabled', true);
+            $pdf->setOption('isRemoteEnabled', false);
+            $pdf->setOption('defaultFont', 'DejaVu Sans');
+
+            /*
+            |----------------------------------------------------------------------
+            | Save to storage/app/public/offboarding/letters/
+            |----------------------------------------------------------------------
+            */
+            $filename = "{$letterType}_offboarding_{$offboarding->id}_" . now()->format('YmdHis') . '.pdf';
+            $storedPath = 'offboarding/letters/' . $filename;
+
+            \Storage::disk('public')->put($storedPath, $pdf->output());
+
+            /*
+            |----------------------------------------------------------------------
+            | Persist the OffboardingLetter record
+            |----------------------------------------------------------------------
+            */
+            $letter = OffboardingLetter::updateOrCreate(
+                [
+                    'offboarding_id' => $offboarding->id,
+                    'letter_type' => $letterType,
+                ],
+                [
+                    'document_path' => $storedPath,
+                    'status' => $request->input('status', 'generated'),
+                ]
+            );
+
+            $letter->document_url = \Storage::disk('public')->url($storedPath);
+
+            return $this->success($letter, 'Letter generated successfully.');
+
+        } catch (\Exception $e) {
+            \Log::error("Failed to generate {$letterType} for offboarding {$offboarding->id}: " . $e->getMessage());
+            return $this->error('Failed to generate letter: ' . $e->getMessage(), 500);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // UPLOAD LETTER FILE
+    // -------------------------------------------------------------------------
+
+    #[OA\Post(
+        path: '/api/admin/offboarding/{id}/letters/upload',
+        operationId: 'uploadOffboardingLetter',
+        summary: 'Upload a letter document for an offboarding record',
+        description: 'Accepts a file upload (PDF, DOCX, JPG, PNG) for a specific letter type and stores it. Creates or updates the OffboardingLetter record with the stored file path.',
+        security: [['bearerAuth' => []]],
+        tags: ['Offboarding']
+    )]
+    #[OA\Parameter(
+        name: 'id',
+        in: 'path',
+        required: true,
+        description: 'Offboarding ID',
+        schema: new OA\Schema(type: 'integer', example: 1)
+    )]
+    #[OA\RequestBody(
+        required: true,
+        content: new OA\MediaType(
+            mediaType: 'multipart/form-data',
+            schema: new OA\Schema(
+                required: ['letter_type', 'file'],
+                properties: [
+                    new OA\Property(
+                        property: 'letter_type',
+                        type: 'string',
+                        example: 'experience_letter',
+                        description: 'Type of the letter (e.g. experience_letter, noc, visa_cancellation)'
+                    ),
+                    new OA\Property(
+                        property: 'file',
+                        type: 'string',
+                        format: 'binary',
+                        description: 'Document file (PDF, DOCX, JPG, PNG – max 10 MB)'
+                    ),
+                ]
+            )
+        )
+    )]
+    #[OA\Response(
+        response: 200,
+        description: 'Letter file uploaded successfully',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'success', type: 'boolean', example: true),
+                new OA\Property(property: 'message', type: 'string', example: 'Letter uploaded successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
+            ]
+        )
+    )]
+    #[OA\Response(response: 403, description: 'Unauthorized')]
+    #[OA\Response(response: 404, description: 'Offboarding record not found')]
+    #[OA\Response(response: 422, description: 'Validation error')]
+    public function uploadLetter(Request $request, $id): JsonResponse
+    {
+        $request->validate([
+            'letter_type' => 'required|string|max:100',
+            'file' => 'required|file|mimes:pdf,docx,jpg,jpeg,png|max:10240',
+        ]);
+
         $offboarding = Offboarding::find($id);
 
         if (!$offboarding) {
@@ -783,13 +1375,32 @@ class OffboardingApiController extends ApiController
             return $this->error('Unauthorized access', 403);
         }
 
-        $data   = $request->only(['letter_type', 'document_path', 'status']);
+        $letterType = $request->input('letter_type');
+        $file = $request->file('file');
+
+        // Build a deterministic filename:
+        //   offboarding_{id}_{letter_type}_{timestamp}.{ext}
+        $ext = $file->getClientOriginalExtension();
+        $filename = "offboarding_{$offboarding->id}_{$letterType}_" . now()->format('YmdHis') . ".{$ext}";
+
+        // Store in storage/app/public/offboarding/letters/
+        $storedPath = $file->storeAs('offboarding/letters', $filename, 'public');
+
+        // Update or create the letter record
         $letter = OffboardingLetter::updateOrCreate(
-            ['offboarding_id' => $offboarding->id, 'letter_type' => $data['letter_type']],
-            $data
+            [
+                'offboarding_id' => $offboarding->id,
+                'letter_type' => $letterType,
+            ],
+            [
+                'document_path' => $storedPath,
+                'status' => 'uploaded',
+            ]
         );
 
-        return $this->success($letter, 'Letter record updated successfully.');
+        $letter->document_url = \Storage::disk('public')->url($storedPath);
+
+        return $this->success($letter, 'Letter uploaded successfully.');
     }
 
     // -------------------------------------------------------------------------
@@ -817,15 +1428,15 @@ class OffboardingApiController extends ApiController
         content: new OA\JsonContent(
             properties: [
                 new OA\Property(property: 'success', type: 'boolean', example: true),
-                new OA\Property(property: 'message', type: 'string',  example: 'Offboarding progress fetched successfully.'),
+                new OA\Property(property: 'message', type: 'string', example: 'Offboarding progress fetched successfully.'),
                 new OA\Property(
                     property: 'data',
                     type: 'object',
                     properties: [
-                        new OA\Property(property: 'offboarding_id',      type: 'integer', example: 1),
-                        new OA\Property(property: 'current_status',      type: 'string',  example: 'pending_checklist'),
-                        new OA\Property(property: 'completed_steps',     type: 'integer', example: 2),
-                        new OA\Property(property: 'total_steps',         type: 'integer', example: 7),
+                        new OA\Property(property: 'offboarding_id', type: 'integer', example: 1),
+                        new OA\Property(property: 'current_status', type: 'string', example: 'pending_checklist'),
+                        new OA\Property(property: 'completed_steps', type: 'integer', example: 2),
+                        new OA\Property(property: 'total_steps', type: 'integer', example: 7),
                         new OA\Property(property: 'progress_percentage', type: 'integer', example: 29),
                         new OA\Property(
                             property: 'steps',
@@ -833,8 +1444,8 @@ class OffboardingApiController extends ApiController
                             items: new OA\Items(
                                 type: 'object',
                                 properties: [
-                                    new OA\Property(property: 'name',   type: 'string', example: 'Visa Cancellation'),
-                                    new OA\Property(property: 'key',    type: 'string', example: 'visa'),
+                                    new OA\Property(property: 'name', type: 'string', example: 'Visa Cancellation'),
+                                    new OA\Property(property: 'key', type: 'string', example: 'visa'),
                                     new OA\Property(
                                         property: 'status',
                                         type: 'string',
@@ -872,19 +1483,19 @@ class OffboardingApiController extends ApiController
             );
         }
 
-        $steps          = $this->getOffboardingSteps($offboarding);
+        $steps = $this->getOffboardingSteps($offboarding);
         $completedSteps = collect($steps)->where('status', 'completed')->count();
-        $totalSteps     = count($steps);
+        $totalSteps = count($steps);
 
         return $this->success([
-            'offboarding_id'      => $offboarding->id,
-            'current_status'      => $offboarding->status,
-            'completed_steps'     => $completedSteps,
-            'total_steps'         => $totalSteps,
+            'offboarding_id' => $offboarding->id,
+            'current_status' => $offboarding->status,
+            'completed_steps' => $completedSteps,
+            'total_steps' => $totalSteps,
             'progress_percentage' => $totalSteps > 0
                 ? round(($completedSteps / $totalSteps) * 100)
                 : 0,
-            'steps'               => $steps,
+            'steps' => $steps,
         ], 'Offboarding progress fetched successfully.');
     }
 
@@ -901,55 +1512,222 @@ class OffboardingApiController extends ApiController
     {
         return [
             [
-                'name'   => 'Initiation',
-                'key'    => 'initiation',
+                'name' => 'Initiation',
+                'key' => 'initiation',
                 'status' => $offboarding->id ? 'completed' : 'pending',
             ],
             [
-                'name'   => 'Visa Cancellation',
-                'key'    => 'visa',
-                'status' => $this->isVisaCompleted($offboarding)
-                    ? 'completed'
-                    : ($offboarding->status === 'pending_visa' ? 'in_progress' : 'pending'),
-            ],
-            [
-                'name'   => 'General Checklist',
-                'key'    => 'checklist',
-                'status' => $this->isChecklistCompleted($offboarding)
-                    ? 'completed'
-                    : ($offboarding->status === 'pending_checklist' ? 'in_progress' : 'pending'),
-            ],
-            [
-                'name'   => 'Exit Interview',
-                'key'    => 'interview',
+                'name' => 'Exit Interview',
+                'key' => 'interview',
                 'status' => $this->isInterviewCompleted($offboarding)
                     ? 'completed'
                     : ($offboarding->status === 'pending_interview' ? 'in_progress' : 'pending'),
             ],
             [
-                'name'   => 'Final Settlement',
-                'key'    => 'settlement',
+                'name' => 'Final Settlement',
+                'key' => 'settlement',
                 'status' => $this->isSettlementCompleted($offboarding)
                     ? 'completed'
                     : ($offboarding->status === 'pending_settlement' ? 'in_progress' : 'pending'),
             ],
             [
-                'name'   => 'Letters & Documents',
-                'key'    => 'letters',
+                'name' => 'Letters & Documents',
+                'key' => 'letters',
                 'status' => $this->isLettersGenerated($offboarding)
                     ? 'completed'
                     : ($offboarding->status === 'pending_letters' ? 'in_progress' : 'pending'),
-            ],
-            [
-                'name'   => 'Asset Return',
-                'key'    => 'assets',
-                'status' => $this->isAssetsReturned($offboarding)
-                    ? 'completed'
-                    : ($offboarding->status === 'pending_assets' ? 'in_progress' : 'pending'),
             ]
         ];
     }
 
+
+    // -------------------------------------------------------------------------
+    // COMPLETE OFFBOARDING
+    // -------------------------------------------------------------------------
+
+    #[OA\Post(
+        path: '/api/admin/offboarding/{id}/complete',
+        operationId: 'completeOffboarding',
+        summary: 'Mark the offboarding process as completed',
+        description: 'Marks the offboarding record\'s status as `completed`. All steps (visa cancellation, checklist, exit interview, final settlement, letters, asset return) must already be completed.',
+        security: [['bearerAuth' => []]],
+        tags: ['Offboarding']
+    )]
+    #[OA\Parameter(
+        name: 'id',
+        in: 'path',
+        required: true,
+        description: 'Offboarding ID',
+        schema: new OA\Schema(type: 'integer', example: 1)
+    )]
+    #[OA\Response(
+        response: 200,
+        description: 'Offboarding marked as completed',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'success', type: 'boolean', example: true),
+                new OA\Property(property: 'message', type: 'string', example: 'Offboarding marked as completed successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
+            ]
+        )
+    )]
+    #[OA\Response(
+        response: 422,
+        description: 'Pending steps still exist',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'success', type: 'boolean', example: false),
+                new OA\Property(property: 'message', type: 'string', example: 'All offboarding steps must be completed first: Final Settlement, Letters & Documents.'),
+            ]
+        )
+    )]
+    #[OA\Response(response: 403, description: 'Unauthorized')]
+    #[OA\Response(response: 404, description: 'Offboarding record not found')]
+    public function completeOffboarding(Request $request, $id): JsonResponse
+    {
+        $offboarding = Offboarding::with([
+            'interview',
+            'settlement',
+            'assets',
+            'letters',
+        ])->find($id);
+
+        if (!$offboarding) {
+            return $this->error('Offboarding record not found.', 404);
+        }
+
+        if (!$this->isAuthorized($request->user(), $offboarding->employee)) {
+            return $this->error(
+                'You are not authorized to complete this offboarding record.',
+                403
+            );
+        }
+
+        $pendingSteps = collect($this->getOffboardingSteps($offboarding))
+            ->where('status', '!=', 'completed')
+            ->pluck('name');
+
+        if ($pendingSteps->isNotEmpty()) {
+            return $this->error(
+                'All offboarding steps must be completed first: ' . $pendingSteps->implode(', ') . '.',
+                422
+            );
+        }
+
+        $offboarding->update(['status' => 'completed']);
+
+        return $this->success($offboarding->fresh(), 'Offboarding marked as completed successfully.');
+    }
+
+    // -------------------------------------------------------------------------
+// DELETE OFFBOARDING
+// -------------------------------------------------------------------------
+
+    #[OA\Delete(
+        path: '/api/admin/offboarding/{id}',
+        operationId: 'deleteOffboarding',
+        summary: 'Delete an offboarding record',
+        description: 'Deletes an offboarding record and its related checklist, assets, interview, settlement, and letter records.',
+        security: [['bearerAuth' => []]],
+        tags: ['Offboarding']
+    )]
+    #[OA\Parameter(
+        name: 'id',
+        in: 'path',
+        required: true,
+        description: 'Offboarding ID',
+        schema: new OA\Schema(type: 'integer', example: 1)
+    )]
+    #[OA\Response(
+        response: 200,
+        description: 'Offboarding deleted successfully',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(
+                    property: 'success',
+                    type: 'boolean',
+                    example: true
+                ),
+                new OA\Property(
+                    property: 'message',
+                    type: 'string',
+                    example: 'Offboarding record deleted successfully.'
+                ),
+            ]
+        )
+    )]
+    #[OA\Response(
+        response: 403,
+        description: 'Unauthorized'
+    )]
+    #[OA\Response(
+        response: 404,
+        description: 'Offboarding record not found'
+    )]
+    public function destroy(Request $request, $id): JsonResponse
+    {
+        $offboarding = Offboarding::with([
+            'employee',
+            'checklists',
+            'assets',
+            'interview',
+            'settlement',
+            'letters',
+        ])->find($id);
+
+        if (!$offboarding) {
+            return $this->error(
+                'Offboarding record not found.',
+                404
+            );
+        }
+
+        // Check authorization
+        if (
+            !$this->isAuthorized(
+                $request->user(),
+                $offboarding->employee
+            )
+        ) {
+            return $this->error(
+                'You are not authorized to delete this offboarding record.',
+                403
+            );
+        }
+
+        try {
+
+            \DB::transaction(function () use ($offboarding) {
+
+                // Delete related records
+                $offboarding->checklists()->delete();
+                $offboarding->assets()->delete();
+                $offboarding->interview()->delete();
+                $offboarding->settlement()->delete();
+                $offboarding->letters()->delete();
+
+                // Delete offboarding record
+                $offboarding->delete();
+            });
+
+            return $this->success(
+                null,
+                'Offboarding record deleted successfully.'
+            );
+
+        } catch (\Exception $e) {
+
+            \Log::error(
+                "Failed to delete offboarding {$offboarding->id}: "
+                . $e->getMessage()
+            );
+
+            return $this->error(
+                'Failed to delete offboarding record.',
+                500
+            );
+        }
+    }
     /**
      * True when all visa_cancellation checklist tasks are done/not_applicable.
      */

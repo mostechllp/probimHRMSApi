@@ -1497,7 +1497,7 @@ class ReportApiController extends ApiController
      */
     public function employeeProbationEnding(): JsonResponse
     {
-        $today     = Carbon::today();
+        $today = Carbon::today();
         $threshold = $today->copy()->addDays(30);
 
         $employees = Employee::whereBetween('probation_end_date', [$today, $threshold])
@@ -1511,9 +1511,9 @@ class ReportApiController extends ApiController
 
         return $this->success([
             'employees' => $employees,
-            'count'     => $employees->count(),
-            'title'     => 'Employees – Probation Ending Soon',
-            'subtitle'  => 'Probation period ending within 30 days',
+            'count' => $employees->count(),
+            'title' => 'Employees – Probation Ending Soon',
+            'subtitle' => 'Probation period ending within 30 days',
         ]);
     }
 
@@ -1524,7 +1524,7 @@ class ReportApiController extends ApiController
      */
     public function employeeContractRenewal(): JsonResponse
     {
-        $today     = Carbon::today();
+        $today = Carbon::today();
         $threshold = $today->copy()->addDays(30);
 
         $employees = Employee::whereBetween('contract_end_date', [$today, $threshold])
@@ -1538,9 +1538,9 @@ class ReportApiController extends ApiController
 
         return $this->success([
             'employees' => $employees,
-            'count'     => $employees->count(),
-            'title'     => 'Employees – Contract Renewal Due',
-            'subtitle'  => 'Contract renewal due within 30 days',
+            'count' => $employees->count(),
+            'title' => 'Employees – Contract Renewal Due',
+            'subtitle' => 'Contract renewal due within 30 days',
         ]);
     }
 
@@ -1559,5 +1559,126 @@ class ReportApiController extends ApiController
             ['output' => $output],
             'Probation and contract renewal alerts have been sent successfully.'
         );
+    }
+
+    /**
+     * Fetch the cost and time taken by employees in each project monthly wise.
+     * Compares planned total time/cost of the project vs actual time/cost logged.
+     *
+     * Actual hourly rate is derived from the employee's active salary package:
+     *   hourly_rate = gross_salary / (30 days × 8 hrs = 240 hrs)
+     *
+     * GET /api/admin/reports/project-cost-time?month=8&year=2026[&project_id=1]
+     */
+    public function projectCostTimeReport(Request $request): JsonResponse
+    {
+        $request->validate([
+            'month' => 'required|integer|min:1|max:12',
+            'year' => 'required|integer|min:2000',
+            'project_id' => 'nullable|exists:projects,id',
+        ]);
+
+        $month = (int) $request->input('month');
+        $year = (int) $request->input('year');
+        $projectId = $request->input('project_id');
+
+        // ── 1. Load projects with filtered time logs ────────────────────────
+        $projectQuery = Project::with([
+            'timeLogs' => function ($q) use ($month, $year) {
+                $q->whereYear('date', $year)->whereMonth('date', $month);
+            },
+        ]);
+
+        if ($projectId) {
+            $projectQuery->where('id', $projectId);
+        }
+
+        $projects = $projectQuery->get();
+
+        // ── 2. Collect all distinct user_ids across all projects ────────────
+        $allUserIds = $projects
+            ->flatMap(fn($p) => $p->timeLogs->pluck('user_id'))
+            ->unique()
+            ->values()
+            ->toArray();
+
+        // ── 3. Pre-load employees keyed by user_id ──────────────────────────
+        $employeesByUserId = Employee::whereIn('user_id', $allUserIds)
+            ->with([
+                'salaryPackages.salaryComponents',
+                'user.designation',
+            ])
+            ->get()
+            ->keyBy('user_id');
+
+        // ── 4. Build the report ─────────────────────────────────────────────
+        $reportData = [];
+
+        foreach ($projects as $project) {
+            $totalActualMinutes = 0;
+            $totalActualCost = 0;
+            $employeeBreakdown = [];
+
+            // Group logs by user so each employee appears once
+            $logsByUser = $project->timeLogs->groupBy('user_id');
+
+            foreach ($logsByUser as $userId => $logs) {
+                $employee = $employeesByUserId->get($userId);
+
+                if (!$employee) {
+                    continue;
+                }
+
+                // ── Actual time ─────────────────────────────────────────────
+                $userMinutes = $logs->sum('time_taken_minutes');
+                $totalActualMinutes += $userMinutes;
+
+                // ── Gross salary from active AED package ────────────────────
+                //    Falls back to the first active package of any currency.
+                $activePackage = $employee->salaryPackages
+                    ->where('is_active', true)
+                    ->sortByDesc(fn($p) => strtoupper($p->currency) === 'AED' ? 1 : 0)
+                    ->first();
+
+                $grossSalary = $activePackage
+                    ? $activePackage->salaryComponents->sum('value')
+                    : 0;
+
+                // ── Implied hourly rate: gross / (30 days × 8 hrs = 240 hrs) ─
+                $hourlyRate = $grossSalary > 0 ? ($grossSalary / 240) : 0;
+                $userCost = round(($userMinutes / 60) * $hourlyRate, 2);
+                $totalActualCost += $userCost;
+
+                $employeeBreakdown[] = [
+                    'employee_id' => $employee->id,
+                    'user_id' => $userId,
+                    'name' => trim($employee->first_name . ' ' . $employee->last_name),
+                    'designation' => $employee->user->designation->name ?? 'N/A',
+                    'gross_salary' => round((float) $grossSalary, 2),
+                    'implied_hourly_rate' => round($hourlyRate, 2),
+                    'actual_time_logged_hours' => round($userMinutes / 60, 2),
+                    'actual_cost' => $userCost,
+                ];
+            }
+
+            $reportData[] = [
+                'project_id' => $project->id,
+                'project_name' => $project->name,
+                'currency' => $project->currency,
+                'planned_total_hours' => $project->total_hours,
+                'planned_total_cost' => $project->total_cost,
+                'actual_time_logged_hours' => round($totalActualMinutes / 60, 2),
+                'actual_cost' => round($totalActualCost, 2),
+                'employee_breakdown' => $employeeBreakdown,
+            ];
+        }
+
+        return $this->success([
+            'report_period' => [
+                'month' => $month,
+                'year' => $year,
+            ],
+            'projects' => $reportData,
+        ], 'Project cost and time report fetched successfully.');
     }
 }

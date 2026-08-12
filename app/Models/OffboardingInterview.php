@@ -20,7 +20,8 @@ class OffboardingInterview extends Model
         'manager_relationship_rating',
         'enjoyed_most',
         'areas_for_improvement',
-        'would_recommend'
+        'would_recommend',
+        'additional_comments'
     ];
 
     public function offboarding()

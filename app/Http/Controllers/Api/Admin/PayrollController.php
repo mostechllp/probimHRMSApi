@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\EmployeeSalaryPackage;
 use App\Models\Payroll;
 use App\Models\Employee;
+use App\Models\LeaveRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -14,6 +15,7 @@ use App\Models\AttendanceLog;
 use App\Models\WorkingHour;
 use App\Models\ProjectTimeLog;
 use App\Models\EmployeeSalaryComponent;
+use App\Models\Holiday;
 
 class PayrollController extends Controller
 {
@@ -32,8 +34,26 @@ class PayrollController extends Controller
         }
 
         // Optional filter by employee_id
-        if ($request->has('employee_id')) {
-            $query->where('employee_id', $request->query('employee_id'));
+        if ($request->has('user_id')) {
+            $query->where('user_id', $request->query('employee_id'));
+        }
+
+        // Optional filter by employee_id
+        if ($request->has('month')) {
+            $query->where('pay_period_month', $request->query('month'));
+        }
+
+        if ($request->has('year')) {
+            $query->where('pay_period_year', $request->query('year'));
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->query('search');
+
+            $query->whereHas('employee', function ($q) use ($search) {
+                $q->where('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%");
+            });
         }
 
         $payrolls = $query->get()->map(fn($payroll) => $this->formatPayroll($payroll));
@@ -51,14 +71,14 @@ class PayrollController extends Controller
     {
         $query = Payroll::query();
 
-        if ($request->has('pay_period_month')) {
-            $query->where('pay_period_month', (int) $request->query('pay_period_month'));
+        if ($request->has('month')) {
+            $query->where('pay_period_month', (int) $request->query('month'));
         }
-        if ($request->has('pay_period_year')) {
-            $query->where('pay_period_year', (int) $request->query('pay_period_year'));
+        if ($request->has('year')) {
+            $query->where('pay_period_year', (int) $request->query('year'));
         }
-        if ($request->has('employee_id')) {
-            $query->where('employee_id', $request->query('employee_id'));
+        if ($request->has('user_id')) {
+            $query->where('user_id', $request->query('employee_id'));
         }
 
         $payrolls = $query->get()->map(fn($payroll) => $this->formatPayroll($payroll));
@@ -112,9 +132,241 @@ class PayrollController extends Controller
     }
 
     /**
+     * Get the total working days of the selected month after deducting holidays and sundays.
+     * Optionally get count of present days for a given employee.
+     */
+    public function getWorkingDays(Request $request): JsonResponse
+    {
+        $request->validate([
+            'month' => 'required|date_format:Y-m',
+            'employee_id' => 'sometimes|nullable',
+        ]);
+
+        $monthStr = $request->input('month');
+        $employeeId = $request->input('employee_id');
+
+        $startDate = Carbon::createFromFormat('Y-m', $monthStr)->startOfMonth();
+        $endDate = Carbon::createFromFormat('Y-m', $monthStr)->endOfMonth();
+
+        // Fetch holidays in the selected month
+        $holidays = Holiday::whereBetween('holiday_date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
+
+        $totalDays = $startDate->diffInDays($endDate) + 1;
+        $workingDays = 0;
+        $sundays = [];
+
+        $currentDate = $startDate->copy();
+        while ($currentDate->lte($endDate)) {
+            $dateStr = $currentDate->toDateString();
+            if ($currentDate->isSunday()) {
+                $sundays[] = $dateStr;
+            } elseif (in_array($dateStr, $holidays)) {
+                // Skip holiday
+            } else {
+                $workingDays++;
+            }
+            $currentDate->addDay();
+        }
+
+        $responseData = [
+            'month' => $monthStr,
+            'total_days' => $totalDays,
+            'sundays_count' => count($sundays),
+            'sundays' => $sundays,
+            'holidays_count' => count($holidays),
+            'holidays' => $holidays,
+            'total_working_days' => $workingDays,
+        ];
+
+        if (!empty($employeeId)) {
+            // Resolve employee
+            $employee = Employee::where('user_id', $employeeId)->first();
+
+            if (!$employee) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Employee not found',
+                ], 404);
+            }
+
+            // Count unique dates employee has punched in within the month
+            $presentDaysCount = AttendanceLog::where('userid', $employeeId)
+                ->whereBetween('log_date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->where('log_status', 'out')
+                ->whereNotNull('punch_in')
+                ->distinct()
+                ->count('log_date');
+
+            $responseData['employee_id'] = $employee->id;
+            $responseData['user_id'] = $employeeId;
+            $responseData['employee_name'] = trim($employee->first_name . ' ' . $employee->last_name);
+            $responseData['present_days'] = $presentDaysCount;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $responseData,
+        ]);
+    }
+
+    /**
      * Calculate monthly salary details for an employee based on attendance,
      * work locations, and assigned salary packages.
      */
+    // public function calculateMonthlySalary(Request $request): JsonResponse
+    // {
+    //     $request->validate([
+    //         'employee_id' => 'required|exists:users,id',
+    //         'month' => 'required|date_format:Y-m',
+    //     ]);
+
+    //     $employeeId = $request->employee_id;
+    //     $month = $request->month;
+
+    //     $employee = Employee::where('user_id', $employeeId)->first();
+
+    //     if (!$employee) {
+    //         return response()->json(['success' => false, 'message' => 'Employee not found'], 404);
+    //     }
+
+    //     // Fetch Attendance Logs for the month
+    //     $startDate = Carbon::createFromFormat('Y-m', $month)->startOfMonth()->toDateString();
+    //     $endDate = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->toDateString();
+
+    //     $attendanceLogs = AttendanceLog::where('userid', $employee->user_id) // AttendanceLog uses the string employee_id
+    //         ->whereBetween('log_date', [$startDate, $endDate])
+    //         ->where('log_status', 'out')
+    //         ->get();
+
+    //     // if ($attendanceLogs->isEmpty()) {
+    //     //     return response()->json(['success' => false, 'message' => 'No completed attendance records found for this month'], 404);
+    //     // }
+
+    //     $groupedByLocation = $attendanceLogs->groupBy('work_location');
+    //     $totalWorkedDays = $attendanceLogs->count();
+    //     // Get working days for the payroll month
+    //     $workingDays = Carbon::createFromFormat('Y-m', $month)
+    //         ->startOfMonth()
+    //         ->diffInWeekdays(
+    //             Carbon::createFromFormat('Y-m', $month)->endOfMonth()
+    //         ) + 1;
+
+    //     $locationBreakdown = [];
+    //     $totalEarnings = 0;
+
+    //     // Load salary packages for this employee via employee_salary_components
+    //     // (employee_salary_packages has no employee_id; the employee link is in employee_salary_components)
+    //     $employeeSalaryPackages = EmployeeSalaryPackage::where('employee_id', $employee->id)
+    //         ->with('salaryComponents')
+    //         ->get();
+
+    //     if ($employeeSalaryPackages->isEmpty()) {
+    //         return response()->json(['success' => false, 'message' => 'No active salary packages found for this employee'], 404);
+    //     }
+
+    //     foreach ($employeeSalaryPackages as $employeeSalaryPackage) {
+    //         if ($employeeSalaryPackage->currency == 'AED') {
+    //             $dubaiPackageData = $employeeSalaryPackage;
+    //         } else {
+    //             $homePackageData = $employeeSalaryPackage;
+    //         }
+    //     }
+
+    //     foreach ($groupedByLocation as $locationName => $logs) {
+    //         $locationName = $locationName ?: 'Unknown';
+    //         $workedDays = $logs->count();
+
+    //         // Determine if location is Dubai-related
+    //         $isDubaiLocation = false;
+    //         $locLower = strtolower($locationName);
+    //         $uaeKeywords = [
+    //             'united arab emirates',
+    //             'uae',
+    //             'dubai',
+    //             'abu dhabi',
+    //             'sharjah',
+    //             'ajman',
+    //             'fujairah',
+    //             'ras al khaimah',
+    //             'umm al quwain',
+    //             'umm al quwain',
+    //             'rak',
+    //             'al ain'
+    //         ];
+    //         foreach ($uaeKeywords as $keyword) {
+    //             if (str_contains($locLower, $keyword)) {
+    //                 $isDubaiLocation = true;
+    //                 break;
+    //             }
+    //         }
+
+    //         // Select the correct package data (array with 'package' and 'components' keys)
+    //         $selectedPackageData = $isDubaiLocation ? $dubaiPackageData : $homePackageData;
+    //         $selectedPackage = $selectedPackageData;
+    //         $selectedComponents = $selectedPackageData->salaryComponents;
+
+    //         $componentsData = [];
+    //         $subtotal = 0;
+
+    //         foreach ($selectedComponents as $component) {
+    //             // Daily amount of this salary component
+    //             $dailyAmount = $component->value / $workingDays;
+
+    //             // Salary earned for this work location
+    //             $amount = round($dailyAmount * $workedDays, 2);
+    //             $componentsData[] = [
+    //                 'id' => $component->id,
+    //                 'name' => $component->component_name,
+    //                 'amount' => $amount,
+    //             ];
+    //             $subtotal += $amount;
+    //         }
+
+    //         $packageDetails = $selectedPackage->toArray();
+    //         unset($packageDetails['salary_components']);
+
+    //         $locationBreakdown[] = [
+    //             'location_name' => $locationName,
+    //             'package' => $packageDetails,
+    //             'worked_days' => $workedDays,
+    //             'currency' => [
+    //                 'code' => $selectedPackage->currency,
+    //                 'symbol' => $selectedPackage->currency,
+    //             ],
+    //             'salary_components' => $componentsData,
+    //             'subtotal' => round($subtotal, 2),
+    //         ];
+
+    //         $totalEarnings += $subtotal;
+    //     }
+
+    //     // Note: Deductions are handled manually per user request, so total_deductions = 0
+    //     $totalEarnings = round($totalEarnings, 2);
+    //     $totalDeductions = 0;
+    //     $grossSalary = $totalEarnings;
+    //     $netSalary = $totalEarnings - $totalDeductions;
+
+    //     $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
+
+    //     return response()->json([
+    //         'success' => true,
+    //         'data' => [
+    //             'employee_id' => $employee->id,
+    //             'employee_name' => $employeeName ?: null,
+    //             'month' => $month,
+    //             'total_worked_days' => $totalWorkedDays,
+    //             'location_breakdown' => $locationBreakdown,
+    //             'total_earnings' => $totalEarnings,
+    //             'total_deductions' => $totalDeductions,
+    //             'gross_salary' => $grossSalary,
+    //             'net_salary' => $netSalary,
+    //         ]
+    //     ]);
+    // }
+
     public function calculateMonthlySalary(Request $request): JsonResponse
     {
         $request->validate([
@@ -128,59 +380,127 @@ class PayrollController extends Controller
         $employee = Employee::where('user_id', $employeeId)->first();
 
         if (!$employee) {
-            return response()->json(['success' => false, 'message' => 'Employee not found'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Employee not found'
+            ], 404);
         }
 
-        // Fetch Attendance Logs for the month
-        $startDate = Carbon::createFromFormat('Y-m', $month)->startOfMonth()->toDateString();
-        $endDate = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->toDateString();
+        // --------------------------------------------------
+        // 1. Date range
+        // --------------------------------------------------
 
-        $attendanceLogs = AttendanceLog::where('userid', $employee->user_id) // AttendanceLog uses the string employee_id
+        $monthDate = Carbon::createFromFormat('Y-m', $month);
+
+        $startDate = $monthDate->copy()->startOfMonth()->toDateString();
+        $endDate = $monthDate->copy()->endOfMonth()->toDateString();
+
+        // --------------------------------------------------
+        // 2. Fetch attendance
+        // --------------------------------------------------
+
+        $attendanceLogs = AttendanceLog::where('userid', $employee->user_id)
             ->whereBetween('log_date', [$startDate, $endDate])
             ->where('log_status', 'out')
             ->get();
 
-        if ($attendanceLogs->isEmpty()) {
-            return response()->json(['success' => false, 'message' => 'No completed attendance records found for this month'], 404);
-        }
+        $groupedByLocation = $attendanceLogs->groupBy(function ($log) {
+            return $log->work_location ?: 'Unknown';
+        });
 
-        $groupedByLocation = $attendanceLogs->groupBy('work_location');
         $totalWorkedDays = $attendanceLogs->count();
-        // Get working days for the payroll month
-        $workingDays = Carbon::createFromFormat('Y-m', $month)
+
+        // --------------------------------------------------
+        // 3. Working days in the month
+        // --------------------------------------------------
+
+        $workingDays = $monthDate->copy()
             ->startOfMonth()
             ->diffInWeekdays(
-                Carbon::createFromFormat('Y-m', $month)->endOfMonth()
+                $monthDate->copy()->endOfMonth()
             ) + 1;
 
-        $locationBreakdown = [];
-        $totalEarnings = 0;
+        // --------------------------------------------------
+        // 4. Fetch salary packages
+        // --------------------------------------------------
 
-        // Load salary packages for this employee via employee_salary_components
-        // (employee_salary_packages has no employee_id; the employee link is in employee_salary_components)
-        $employeeSalaryPackages = EmployeeSalaryPackage::where('employee_id', $employee->id)
+        $employeeSalaryPackages = EmployeeSalaryPackage::where(
+            'employee_id',
+            $employee->id
+        )
             ->with('salaryComponents')
             ->get();
 
         if ($employeeSalaryPackages->isEmpty()) {
-            return response()->json(['success' => false, 'message' => 'No active salary packages found for this employee'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'No active salary packages found for this employee'
+            ], 404);
         }
 
-        foreach ($employeeSalaryPackages as $employeeSalaryPackage) {
-            if ($employeeSalaryPackage->currency == 'AED') {
-                $dubaiPackageData = $employeeSalaryPackage;
+        // --------------------------------------------------
+        // 5. Separate UAE and Home packages
+        // --------------------------------------------------
+
+        $dubaiPackageData = null;
+        $homePackageData = null;
+
+        foreach ($employeeSalaryPackages as $package) {
+
+            if (strtoupper($package->currency) === 'AED') {
+                $dubaiPackageData = $package;
             } else {
-                $homePackageData = $employeeSalaryPackage;
+                $homePackageData = $package;
             }
         }
 
+        // --------------------------------------------------
+        // 6. Prepare salary package information
+        //    independently from attendance/location
+        // --------------------------------------------------
+
+        $salaryPackages = [];
+
+        foreach ($employeeSalaryPackages as $package) {
+
+            $components = [];
+
+            foreach ($package->salaryComponents as $component) {
+
+                $components[] = [
+                    'id' => $component->id,
+                    'name' => $component->component_name,
+                    'value' => round((float) $component->value, 2),
+                ];
+            }
+
+            $packageDetails = $package->toArray();
+
+            unset($packageDetails['salary_components']);
+
+            $salaryPackages[] = [
+                'package' => $packageDetails,
+                'currency' => [
+                    'code' => $package->currency,
+                    'symbol' => $package->currency,
+                ],
+                'salary_components' => $components,
+            ];
+        }
+
+        // --------------------------------------------------
+        // 7. Calculate salary based on attendance locations
+        // --------------------------------------------------
+
+        $locationBreakdown = [];
+        $totalEarnings = 0;
+
         foreach ($groupedByLocation as $locationName => $logs) {
-            $locationName = $locationName ?: 'Unknown';
+
             $workedDays = $logs->count();
 
-            // Determine if location is Dubai-related
-            $isDubaiLocation = false;
             $locLower = strtolower($locationName);
+
             $uaeKeywords = [
                 'united arab emirates',
                 'uae',
@@ -191,10 +511,12 @@ class PayrollController extends Controller
                 'fujairah',
                 'ras al khaimah',
                 'umm al quwain',
-                'umm al quwain',
                 'rak',
                 'al ain'
             ];
+
+            $isDubaiLocation = false;
+
             foreach ($uaeKeywords as $keyword) {
                 if (str_contains($locLower, $keyword)) {
                     $isDubaiLocation = true;
@@ -202,29 +524,41 @@ class PayrollController extends Controller
                 }
             }
 
-            // Select the correct package data (array with 'package' and 'components' keys)
-            $selectedPackageData = $isDubaiLocation ? $dubaiPackageData : $homePackageData;
-            $selectedPackage = $selectedPackageData;
-            $selectedComponents = $selectedPackageData->salaryComponents;
+            // Select package according to location
+            $selectedPackage = $isDubaiLocation
+                ? $dubaiPackageData
+                : $homePackageData;
+
+            // If package doesn't exist, skip this location
+            if (!$selectedPackage) {
+                continue;
+            }
 
             $componentsData = [];
             $subtotal = 0;
 
-            foreach ($selectedComponents as $component) {
-                // Daily amount of this salary component
-                $dailyAmount = $component->value / $workingDays;
+            foreach ($selectedPackage->salaryComponents as $component) {
 
-                // Salary earned for this work location
-                $amount = round($dailyAmount * $workedDays, 2);
+                $dailyAmount = $workingDays > 0
+                    ? ((float) $component->value / $workingDays)
+                    : 0;
+
+                $amount = round(
+                    $dailyAmount * $workedDays,
+                    2
+                );
+
                 $componentsData[] = [
                     'id' => $component->id,
                     'name' => $component->component_name,
                     'amount' => $amount,
                 ];
+
                 $subtotal += $amount;
             }
 
             $packageDetails = $selectedPackage->toArray();
+
             unset($packageDetails['salary_components']);
 
             $locationBreakdown[] = [
@@ -242,25 +576,51 @@ class PayrollController extends Controller
             $totalEarnings += $subtotal;
         }
 
-        // Note: Deductions are handled manually per user request, so total_deductions = 0
-        $totalEarnings = round($totalEarnings, 2);
-        $totalDeductions = 0;
-        $grossSalary = $totalEarnings;
-        $netSalary = $totalEarnings - $totalDeductions;
+        // --------------------------------------------------
+        // 8. Final salary calculation
+        // --------------------------------------------------
 
-        $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
+        $totalEarnings = round($totalEarnings, 2);
+
+        $totalDeductions = 0;
+
+        $grossSalary = $totalEarnings;
+
+        $netSalary = $grossSalary - $totalDeductions;
+
+        $employeeName = trim(
+            $employee->first_name . ' ' . $employee->last_name
+        );
+
+        // --------------------------------------------------
+        // 9. Response
+        // --------------------------------------------------
 
         return response()->json([
             'success' => true,
+
             'data' => [
+
                 'employee_id' => $employee->id,
+
                 'employee_name' => $employeeName ?: null,
+
                 'month' => $month,
+
                 'total_worked_days' => $totalWorkedDays,
+
+                // Packages are independent of location/attendance
+                'salary_packages' => $salaryPackages,
+
+                // Only actual worked locations come here
                 'location_breakdown' => $locationBreakdown,
+
                 'total_earnings' => $totalEarnings,
+
                 'total_deductions' => $totalDeductions,
+
                 'gross_salary' => $grossSalary,
+
                 'net_salary' => $netSalary,
             ]
         ]);
@@ -282,58 +642,86 @@ class PayrollController extends Controller
         $employee = Employee::where('user_id', $employeeId)->first();
 
         if (!$employee) {
-            return response()->json(['success' => false, 'message' => 'Employee not found'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Employee not found'
+            ], 404);
         }
 
-        // Fetch Attendance Logs for the month to get the working dates
-        $startDate = Carbon::createFromFormat('Y-m', $month)->startOfMonth()->toDateString();
-        $endDate = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->toDateString();
+        $monthDate = Carbon::createFromFormat('Y-m', $month);
 
+        $startDate = $monthDate->copy()->startOfMonth()->toDateString();
+        $endDate = $monthDate->copy()->endOfMonth()->toDateString();
+
+        // Fetch completed attendance records
         $attendanceLogs = AttendanceLog::where('userid', $employee->user_id)
             ->whereBetween('log_date', [$startDate, $endDate])
             ->where('log_status', 'out')
-            ->get();
-
-        $workingHoursList = WorkingHour::all();
-        $uniqueDates = $attendanceLogs->pluck('log_date')->unique()->toArray();
-        $projectLogsQuery = ProjectTimeLog::with('project')
-            ->where('user_id', $employee->user_id)
-            ->whereIn('date', $uniqueDates)
+            ->whereNotNull('punch_in')
+            ->whereNotNull('punch_out')
             ->get();
 
         $overtimeDetails = [];
-        foreach ($uniqueDates as $date) {
-            $dayOfWeek = Carbon::parse($date)->format('l');
-            $workingHour = $workingHoursList->first(function ($wh) use ($dayOfWeek) {
-                return strtolower($wh->day) === strtolower($dayOfWeek);
-            });
 
-            $requiredMinutes = 0;
-            if ($workingHour && $workingHour->is_enabled) {
-                $start = Carbon::createFromTimeString($workingHour->start_time);
-                $end = Carbon::createFromTimeString($workingHour->end_time);
-                $requiredMinutes = $start->diffInMinutes($end);
+        // 9 hours = 540 minutes
+        $requiredMinutes = 9 * 60;
+
+        foreach ($attendanceLogs as $attendance) {
+
+            $date = $attendance->log_date;
+
+            // Calculate actual worked minutes
+            $punchIn = Carbon::parse($attendance->punch_in);
+            $punchOut = Carbon::parse($attendance->punch_out);
+
+            $workedMinutes = $punchIn->diffInMinutes($punchOut);
+
+            // Only include days greater than 9 hours
+            if ($workedMinutes <= $requiredMinutes) {
+                continue;
             }
 
-            $logsForDate = $projectLogsQuery->where('date', $date);
+            $overtimeMinutes = $workedMinutes - $requiredMinutes;
 
-            $totalProjectMinutes = $logsForDate->sum('time_taken_minutes');
-            $overtimeMinutes = max(0, $totalProjectMinutes - $requiredMinutes);
+            // Get project logs for this date
+            $projects = ProjectTimeLog::with('project')
+                ->where('user_id', $employee->user_id)
+                ->whereDate('date', $date)
+                ->get()
+                ->map(function ($log) {
+                    return [
+                        'project_name' => $log->project
+                            ? $log->project->name
+                            : 'Unknown',
 
-            $projects = $logsForDate->map(function ($log) {
-                return [
-                    'project_name' => $log->project ? $log->project->name : 'Unknown',
-                    'time_taken_hours' => round($log->time_taken_minutes / 60, 2),
-                    'time_taken_minutes' => $log->time_taken_minutes,
-                ];
-            })->values()->toArray();
+                        'time_taken_hours' => round(
+                            $log->time_taken_minutes / 60,
+                            2
+                        ),
+
+                        'time_taken_minutes' => $log->time_taken_minutes,
+                    ];
+                })
+                ->values()
+                ->toArray();
 
             $overtimeDetails[] = [
-                'date' => $date,
-                'day' => $dayOfWeek,
-                'required_working_hours' => round($requiredMinutes / 60, 2),
-                'total_logged_hours' => round($totalProjectMinutes / 60, 2),
-                'overtime_hours' => round($overtimeMinutes / 60, 2),
+                'date' => Carbon::parse($date)->format('d M, Y'),
+
+                'day' => Carbon::parse($date)->format('l'),
+
+                'required_working_hours' => 9,
+
+                'total_logged_hours' => round(
+                    $workedMinutes / 60,
+                    2
+                ),
+
+                'overtime_hours' => round(
+                    $overtimeMinutes / 60,
+                    2
+                ),
+
                 'projects' => $projects,
             ];
         }
@@ -760,7 +1148,35 @@ class PayrollController extends Controller
                 return response()->json(['success' => false, 'message' => 'Payslip template not found'], 500);
             }
 
-            $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll]);
+            $monthStr = $payroll->pay_period_year . '-' . $payroll->pay_period_month;
+
+            $startDate = Carbon::createFromFormat('Y-m', $monthStr)->startOfMonth();
+            $endDate = Carbon::createFromFormat('Y-m', $monthStr)->endOfMonth();
+
+            // Fetch holidays in the selected month
+            $holidays = Holiday::whereBetween('holiday_date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->pluck('holiday_date')
+                ->map(fn($date) => Carbon::parse($date)->toDateString())
+                ->toArray();
+
+            $totalDays = $startDate->diffInDays($endDate) + 1;
+            $workingDays = 0;
+            $sundays = [];
+
+            $currentDate = $startDate->copy();
+            while ($currentDate->lte($endDate)) {
+                $dateStr = $currentDate->toDateString();
+                if ($currentDate->isSunday()) {
+                    $sundays[] = $dateStr;
+                } elseif (in_array($dateStr, $holidays)) {
+                    // Skip holiday
+                } else {
+                    $workingDays++;
+                }
+                $currentDate->addDay();
+            }
+
+            $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll, 'working_days' => $workingDays]);
             $pdfContent = $pdf->output();
 
             \Illuminate\Support\Facades\Mail::to($user->email)->send(new \App\Mail\PayslipMail($payroll, $pdfContent));
@@ -781,33 +1197,169 @@ class PayrollController extends Controller
     /**
      * Download the payslip PDF on the fly
      */
+
     public function downloadPayslip($id)
     {
-        $payroll = Payroll::with(['employee.user.designation', 'employee.bankDetails'])->find($id);
+        $payroll = Payroll::with([
+            'employee.user.designation',
+            'employee.bankDetails'
+        ])->find($id);
 
         if (!$payroll) {
-            return response()->json(['success' => false, 'message' => 'Payroll record not found'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Payroll record not found'
+            ], 404);
         }
 
         if ($payroll->status !== 'completed') {
-            return response()->json(['success' => false, 'message' => 'Cannot download payslip for incomplete payroll'], 400);
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot download payslip for incomplete payroll'
+            ], 400);
         }
 
         try {
+
             if (!view()->exists('pdf.payslip')) {
-                return response()->json(['success' => false, 'message' => 'Payslip template not found'], 500);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Payslip template not found'
+                ], 500);
             }
 
-            $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll]);
-            $monthName = Carbon::createFromFormat('m', $payroll->pay_period_month)->format('F');
+            /*
+            |--------------------------------------------------------------------------
+            | Payroll Month Dates
+            |--------------------------------------------------------------------------
+            */
+
+            $startDate = Carbon::create(
+                $payroll->pay_period_year,
+                $payroll->pay_period_month,
+                1
+            )->startOfMonth();
+
+            $endDate = $startDate->copy()->endOfMonth();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Fetch Approved Leaves
+            |--------------------------------------------------------------------------
+            */
+
+            $leaves = LeaveRequest::where('employee_id', $payroll->employee->id)
+                ->where('status', 'approved')
+                ->whereDate('start_date', '<=', $endDate)
+                ->whereDate('end_date', '>=', $startDate)
+                ->orderBy('start_date')
+                ->get();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Calculate Leave Days
+            |--------------------------------------------------------------------------
+            */
+
+            $leaveDetails = [];
+            $totalLeaveDays = 0;
+
+            foreach ($leaves as $leave) {
+
+                $leaveStart = Carbon::parse($leave->start_date);
+                $leaveEnd = Carbon::parse($leave->end_date);
+
+                // Keep only the days that fall within the payroll month
+                $effectiveStart = $leaveStart->greaterThan($startDate)
+                    ? $leaveStart
+                    : $startDate;
+
+                $effectiveEnd = $leaveEnd->lessThan($endDate)
+                    ? $leaveEnd
+                    : $endDate;
+
+                $days = $effectiveStart->diffInDays($effectiveEnd) + 1;
+
+                $totalLeaveDays += $days;
+
+                $leaveDetails[] = [
+                    'leave_type' => $leave->leave_type
+                        ?? $leave->type
+                        ?? 'Leave',
+
+                    'start_date' => $effectiveStart->format('d M, Y'),
+
+                    'end_date' => $effectiveEnd->format('d M, Y'),
+
+                    'days' => $days,
+                ];
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Generate PDF
+            |--------------------------------------------------------------------------
+            */
+            $monthStr = $payroll->pay_period_year . '-' . $payroll->pay_period_month;
+
+            $startDate = Carbon::createFromFormat('Y-m', $monthStr)->startOfMonth();
+            $endDate = Carbon::createFromFormat('Y-m', $monthStr)->endOfMonth();
+
+            // Fetch holidays in the selected month
+            $holidays = Holiday::whereBetween('holiday_date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->pluck('holiday_date')
+                ->map(fn($date) => Carbon::parse($date)->toDateString())
+                ->toArray();
+
+            $totalDays = $startDate->diffInDays($endDate) + 1;
+            $workingDays = 0;
+            $sundays = [];
+
+            $currentDate = $startDate->copy();
+            while ($currentDate->lte($endDate)) {
+                $dateStr = $currentDate->toDateString();
+                if ($currentDate->isSunday()) {
+                    $sundays[] = $dateStr;
+                } elseif (in_array($dateStr, $holidays)) {
+                    // Skip holiday
+                } else {
+                    $workingDays++;
+                }
+                $currentDate->addDay();
+            }
+
+            $pdf = Pdf::loadView('pdf.payslip', [
+                'payroll' => $payroll,
+                'leaveDetails' => $leaveDetails,
+                'totalLeaveDays' => $totalLeaveDays,
+                'total_days' => $totalDays,
+                'working_days' => $workingDays,
+            ])->setPaper('a4', 'portrait');
+
+            $pdf->setOption('isHtml5ParserEnabled', true);
+            $pdf->setOption('isRemoteEnabled', true);
+            $pdf->setOption('defaultFont', 'DejaVu Sans');
+
+            $monthName = Carbon::createFromFormat(
+                'm',
+                $payroll->pay_period_month
+            )->format('F');
+
             $fileName = "Payslip_{$monthName}_{$payroll->pay_period_year}.pdf";
 
             return $pdf->download($fileName);
+
         } catch (\Exception $e) {
-            \Log::error("Failed to generate PDF for payroll {$payroll->id}: " . $e->getMessage());
+
+            \Log::error(
+                "Failed to generate PDF for payroll {$payroll->id}: "
+                . $e->getMessage()
+            );
+
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to generate payslip: ' . $e->getMessage()
+                'message' => 'Failed to generate payslip: '
+                    . $e->getMessage()
             ], 500);
         }
     }
@@ -912,15 +1464,111 @@ class PayrollController extends Controller
      */
     public function show($id): JsonResponse
     {
-        $payroll = Payroll::with('employee')->find($id);
+        $payroll = Payroll::with([
+            'employee.user',
+            'employee.bankDetails'
+        ])->find($id);
 
         if (!$payroll) {
-            return response()->json(['success' => false, 'message' => 'Payroll record not found'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Payroll record not found'
+            ], 404);
         }
+
+        $data = $this->formatPayroll($payroll);
+
+        $employee = $payroll->employee;
+        $user = $employee?->user;
+
+        /*
+           |--------------------------------------------------------------------------
+           | Payroll Month Dates
+           |--------------------------------------------------------------------------
+           */
+
+        $startDate = Carbon::create(
+            $payroll->pay_period_year,
+            $payroll->pay_period_month,
+            1
+        )->startOfMonth();
+
+        $endDate = $startDate->copy()->endOfMonth();
+
+        /*
+            |--------------------------------------------------------------------------
+            | Fetch Approved Leaves
+            |--------------------------------------------------------------------------
+            */
+
+        $leaves = LeaveRequest::where('employee_id', $payroll->employee->id)
+            ->where('status', 'approved')
+            ->whereDate('start_date', '<=', $endDate)
+            ->whereDate('end_date', '>=', $startDate)
+            ->orderBy('start_date')
+            ->get();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Calculate Leave Days
+        |--------------------------------------------------------------------------
+        */
+
+        $leaveDetails = [];
+        $totalLeaveDays = 0;
+
+        foreach ($leaves as $leave) {
+
+            $leaveStart = Carbon::parse($leave->start_date);
+            $leaveEnd = Carbon::parse($leave->end_date);
+
+            // Keep only the days that fall within the payroll month
+            $effectiveStart = $leaveStart->greaterThan($startDate)
+                ? $leaveStart
+                : $startDate;
+
+            $effectiveEnd = $leaveEnd->lessThan($endDate)
+                ? $leaveEnd
+                : $endDate;
+
+            $days = $effectiveStart->diffInDays($effectiveEnd) + 1;
+
+            $totalLeaveDays += $days;
+
+            $leaveDetails[] = [
+                'leave_type' => $leave->leave_type
+                    ?? $leave->type
+                    ?? 'Leave',
+
+                'start_date' => $effectiveStart->format('d M, Y'),
+
+                'end_date' => $effectiveEnd->format('d M, Y'),
+
+                'days' => $days,
+            ];
+        }
+
+        $data['employee_id'] = $employee?->user_id;
+        $data['employee_name'] = $employee
+            ? trim($employee->first_name . ' ' . $employee->last_name)
+            : null;
+
+        $data['designation'] = $user?->designation;
+        $data['department'] = $user?->department;
+        $data['employee_type'] = $user?->type;
+        $data['joining_date'] = $employee?->joining_date;
+        $data['bank_details'] = $employee?->bankDetails;
+        $data['leaveDetails'] = $leaveDetails;
+
 
         return response()->json([
             'success' => true,
-            'data' => array_merge($this->formatPayroll($payroll), ['step_data' => $payroll->data]),
+            'data' => array_merge(
+                $data,
+                [
+                    'step_data' => $payroll->data
+                ]
+            ),
         ]);
     }
 
@@ -1013,12 +1661,16 @@ class PayrollController extends Controller
             }
 
             // Also check a top-level 'employee_id' in the data blob
-            if (!$recoveredId && !empty($data['employee_id'])) {
-                $recoveredId = (int) $data['employee_id'];
+            if (!$recoveredId && !empty($data['user_id'])) {
+                $recoveredId = (int) $data['user_id'];
             }
 
             if ($recoveredId) {
-                $payroll->employee_id = $recoveredId;
+                $payroll->user_id = $recoveredId;
+                $emp = Employee::find($recoveredId);
+                if ($emp) {
+                    $payroll->user_id = $emp->user_id;
+                }
                 $payroll->saveQuietly();
                 $payroll->load('employee');
             }
@@ -1084,5 +1736,357 @@ class PayrollController extends Controller
             'status' => $payroll->status,
             'payment_date' => $paymentDate,
         ];
+    }
+
+    // ======================================================================
+    // AUTO-GENERATE PAYROLL — shared core logic
+    // ======================================================================
+
+    /**
+     * Build (but not persist) a payroll record for a single employee for the
+     * given month string (Y-m).
+     *
+     * Returns an array with keys:
+     *   success        bool
+     *   skip_reason    string|null   (populated when success = false)
+     *   gross_salary   float
+     *   net_pay        float
+     *   overtime       float
+     *   deductions     float
+     *   currency       string
+     *   data           array         (full step-1 breakdown stored in payroll JSON)
+     */
+    private function buildPayrollForEmployee(Employee $employee, string $month): array
+    {
+        $monthDate = Carbon::createFromFormat('Y-m', $month);
+        $startDate = $monthDate->copy()->startOfMonth()->toDateString();
+        $endDate = $monthDate->copy()->endOfMonth()->toDateString();
+
+        // ------------------------------------------------------------------
+        // 1. Attendance logs for the month
+        // ------------------------------------------------------------------
+        $attendanceLogs = AttendanceLog::where('userid', $employee->user_id)
+            ->whereBetween('log_date', [$startDate, $endDate])
+            ->where('log_status', 'out')
+            ->get();
+
+        if ($attendanceLogs->isEmpty()) {
+            return [
+                'success' => false,
+                'skip_reason' => 'No attendance records found',
+            ];
+        }
+
+        // ------------------------------------------------------------------
+        // 2. Working days in the month (Mon–Sat, same as existing logic)
+        // ------------------------------------------------------------------
+        $workingDays = $monthDate->copy()
+            ->startOfMonth()
+            ->diffInWeekdays($monthDate->copy()->endOfMonth()) + 1;
+
+        $workingDays = max(1, $workingDays); // guard against division by zero
+
+        // ------------------------------------------------------------------
+        // 3. Salary packages
+        // ------------------------------------------------------------------
+        $salaryPackages = EmployeeSalaryPackage::where('employee_id', $employee->id)
+            ->with('salaryComponents')
+            ->get();
+
+        if ($salaryPackages->isEmpty()) {
+            return [
+                'success' => false,
+                'skip_reason' => 'No salary packages found',
+            ];
+        }
+
+        // Separate AED (Dubai) vs home-currency packages
+        $dubaiPackage = null;
+        $homePackage = null;
+
+        foreach ($salaryPackages as $pkg) {
+            if (strtoupper($pkg->currency) === 'AED') {
+                $dubaiPackage = $pkg;
+            } else {
+                $homePackage = $pkg;
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 4. Group attendance by work_location and compute earnings per location
+        //    (mirrors the logic in calculateMonthlySalary)
+        // ------------------------------------------------------------------
+        $uaeKeywords = [
+            'united arab emirates',
+            'uae',
+            'dubai',
+            'abu dhabi',
+            'sharjah',
+            'ajman',
+            'fujairah',
+            'ras al khaimah',
+            'umm al quwain',
+            'rak',
+            'al ain',
+        ];
+
+        $grouped = $attendanceLogs->groupBy(fn($log) => $log->work_location ?: 'Unknown');
+        $locationBreakdown = [];
+        $totalEarnings = 0.0;
+        $primaryCurrency = $dubaiPackage ? 'AED' : ($homePackage?->currency ?? 'AED');
+
+        foreach ($grouped as $locationName => $logs) {
+            $workedDays = $logs->count();
+            $locLower = strtolower($locationName);
+
+            $isUae = false;
+            foreach ($uaeKeywords as $kw) {
+                if (str_contains($locLower, $kw)) {
+                    $isUae = true;
+                    break;
+                }
+            }
+
+            $selectedPackage = $isUae ? $dubaiPackage : $homePackage;
+
+            if (!$selectedPackage) {
+                continue; // no matching package for this location – skip
+            }
+
+            $componentsData = [];
+            $subtotal = 0.0;
+
+            foreach ($selectedPackage->salaryComponents as $component) {
+                $dailyAmount = (float) $component->value / $workingDays;
+                $amount = round($dailyAmount * $workedDays, 2);
+
+                $componentsData[] = [
+                    'id' => $component->id,
+                    'name' => $component->component_name,
+                    'amount' => $amount,
+                ];
+
+                $subtotal += $amount;
+            }
+
+            $pkgDetails = $selectedPackage->toArray();
+            unset($pkgDetails['salary_components']);
+
+            $locationBreakdown[] = [
+                'location_name' => $locationName,
+                'package' => $pkgDetails,
+                'worked_days' => $workedDays,
+                'currency' => [
+                    'code' => $selectedPackage->currency,
+                    'symbol' => $selectedPackage->currency,
+                ],
+                'salary_components' => $componentsData,
+                'subtotal' => round($subtotal, 2),
+            ];
+
+            // Track the currency that earned the most for the payroll header
+            if ($subtotal > 0) {
+                $primaryCurrency = $selectedPackage->currency;
+            }
+
+            $totalEarnings += $subtotal;
+        }
+
+        // If everything was skipped (no matching packages for any location)
+        if (empty($locationBreakdown)) {
+            return [
+                'success' => false,
+                'skip_reason' => 'No matching salary package for any worked location',
+            ];
+        }
+
+        // ------------------------------------------------------------------
+        // 5. Final figures
+        // ------------------------------------------------------------------
+        $grossSalary = round($totalEarnings, 2);
+        $totalDeductions = 0.0;
+        $overtime = 0.0;
+        $netPay = round($grossSalary + $overtime - $totalDeductions, 2);
+
+        $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
+
+        $dataBlob = [
+            'step_1' => [
+                'pay_period_month' => (int) $monthDate->format('m'),
+                'pay_period_year' => (int) $monthDate->format('Y'),
+                'period_start' => null,
+                'period_end' => null,
+                'payment_date' => null,
+                'payment_mode' => null,
+                'total_working_days' => $workingDays,
+                'days_present' => $attendanceLogs->count(),
+            ],
+            'step_2' => [
+                'pay_period_month' => (int) $monthDate->format('m'),
+                'pay_period_year' => (int) $monthDate->format('Y'),
+                'package_ids' => array_values(array_filter([$dubaiPackage?->id, $homePackage?->id])),
+                'location_breakdown' => $locationBreakdown,
+                'total_earnings' => $grossSalary,
+                'total_deductions' => 0.0,
+                'gross_salary' => $grossSalary,
+                'net_salary' => $netPay,
+            ],
+            'step_3' => [
+                'pay_period_month' => (int) $monthDate->format('m'),
+                'pay_period_year' => (int) $monthDate->format('Y'),
+                'overtime_details' => [],
+                'total_overtime_amount' => 0.0,
+            ],
+            'step_4' => [
+                'pay_period_month' => (int) $monthDate->format('m'),
+                'pay_period_year' => (int) $monthDate->format('Y'),
+                'deductions' => [],
+                'total_deductions' => 0.0,
+            ]
+        ];
+
+        return [
+            'success' => true,
+            'skip_reason' => null,
+            'gross_salary' => $grossSalary,
+            'net_pay' => $netPay,
+            'overtime' => $overtime,
+            'deductions' => $totalDeductions,
+            'currency' => $primaryCurrency,
+            'data' => $dataBlob,
+        ];
+    }
+
+    // ======================================================================
+    // PUBLIC API – Generate payroll for all (or one) employee(s)
+    // ======================================================================
+
+    /**
+     * POST /api/admin/payroll/generate
+     *
+     * Generates payroll records for all active employees for the previous
+     * month (or a custom month supplied via the `month` parameter).
+     * Optionally restrict to a single employee via `user_id`.
+     *
+     * Body params (all optional):
+     *   month    string  Y-m  (default: previous month)
+     *   user_id  int         (default: all active employees)
+     */
+    public function generatePayroll(Request $request): JsonResponse
+    {
+        $request->validate([
+            'month' => 'sometimes|nullable|date_format:Y-m',
+            'user_id' => 'sometimes|nullable|exists:users,id',
+        ]);
+
+        // Default to previous month
+        $month = $request->input('month')
+            ?? Carbon::now()->subMonth()->format('Y-m');
+
+        $payPeriodMonth = (int) Carbon::createFromFormat('Y-m', $month)->format('m');
+        $payPeriodYear = (int) Carbon::createFromFormat('Y-m', $month)->format('Y');
+
+        // ------------------------------------------------------------------
+        // Resolve target employees
+        // ------------------------------------------------------------------
+        $employeesQuery = Employee::whereHas('user', fn($q) => $q->where('status', 'active'));
+
+        if ($request->filled('user_id')) {
+            $employeesQuery->where('user_id', $request->input('user_id'));
+        }
+
+        $employees = $employeesQuery->get();
+
+        if ($employees->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No active employees found',
+            ], 404);
+        }
+
+        // ------------------------------------------------------------------
+        // Process each employee
+        // ------------------------------------------------------------------
+        $generated = [];
+        $skipped = [];
+        $failed = [];
+
+        foreach ($employees as $employee) {
+            $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
+
+            // Skip if payroll already exists for this period
+            $exists = Payroll::where('user_id', $employee->user_id)
+                ->where('pay_period_month', $payPeriodMonth)
+                ->where('pay_period_year', $payPeriodYear)
+                ->exists();
+
+            if ($exists) {
+                $skipped[] = [
+                    'user_id' => $employee->user_id,
+                    'employee_name' => $employeeName,
+                    'reason' => 'Payroll already exists for this period',
+                ];
+                continue;
+            }
+
+            try {
+                $result = $this->buildPayrollForEmployee($employee, $month);
+
+                if (!$result['success']) {
+                    $skipped[] = [
+                        'user_id' => $employee->user_id,
+                        'employee_name' => $employeeName,
+                        'reason' => $result['skip_reason'],
+                    ];
+                    continue;
+                }
+
+                $payroll = new Payroll();
+                $payroll->employee_id = $employee->id;
+                $payroll->user_id = $employee->user_id;
+                $payroll->pay_period_month = $payPeriodMonth;
+                $payroll->pay_period_year = $payPeriodYear;
+                $payroll->gross_salary = $result['gross_salary'];
+                $payroll->net_pay = $result['net_pay'];
+                $payroll->overtime = $result['overtime'];
+                $payroll->deductions = $result['deductions'];
+                $payroll->currency = $result['currency'];
+                $payroll->status = 'generated';
+                $payroll->current_step = 1;
+                $payroll->data = $result['data'];
+                $payroll->save();
+
+                $generated[] = [
+                    'user_id' => $employee->user_id,
+                    'employee_name' => $employeeName,
+                    'payroll_id' => $payroll->id,
+                    'gross_salary' => $result['gross_salary'],
+                    'net_pay' => $result['net_pay'],
+                    'currency' => $result['currency'],
+                ];
+            } catch (\Throwable $e) {
+                \Log::error("Payroll generation failed for user {$employee->user_id}: " . $e->getMessage());
+                $failed[] = [
+                    'user_id' => $employee->user_id,
+                    'employee_name' => $employeeName,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'month' => $month,
+            'summary' => [
+                'generated_count' => count($generated),
+                'skipped_count' => count($skipped),
+                'failed_count' => count($failed),
+            ],
+            'data' => [
+                'generated' => $generated,
+                'skipped' => $skipped,
+                'failed' => $failed,
+            ],
+        ]);
     }
 }

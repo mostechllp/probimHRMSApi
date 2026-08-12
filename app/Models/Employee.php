@@ -170,4 +170,5 @@ class Employee extends Model
             ->withTimestamps()
             ->wherePivotNull('deleted_at');
     }
+
 }

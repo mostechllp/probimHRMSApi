@@ -4,18 +4,25 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     public function up(): void
     {
         Schema::create('offboardings', function (Blueprint $table) {
             $table->id();
             $table->foreignId('employee_id')->constrained('employees')->cascadeOnDelete();
+            $table->foreignId('reporting_manager_id')->constrained('employees')->cascadeOnDelete();
             $table->enum('status', [
-                'draft', 'pending_visa', 'pending_checklist', 'pending_assets',
-                'pending_interview', 'pending_settlement', 'pending_letters', 'completed'
+                'draft',
+                'pending_visa',
+                'pending_checklist',
+                'pending_assets',
+                'pending_interview',
+                'pending_settlement',
+                'pending_letters',
+                'completed'
             ])->default('draft');
             $table->date('last_working_day')->nullable();
+            $table->date('resignation_date')->nullable();
             $table->string('separation_type')->nullable();
             $table->integer('notice_period_days')->nullable();
             $table->date('notice_start_date')->nullable();
@@ -49,6 +56,7 @@ return new class extends Migration
             $table->text('enjoyed_most')->nullable();
             $table->text('areas_for_improvement')->nullable();
             $table->boolean('would_recommend')->default(false);
+            $table->text('additional_comments')->nullable();
             $table->timestamps();
         });
 

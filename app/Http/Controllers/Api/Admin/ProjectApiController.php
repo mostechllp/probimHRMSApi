@@ -21,7 +21,7 @@ class ProjectApiController extends ApiController
         if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
             $query->where(function ($q) use ($user) {
                 $q->where('project_manager_id', $user->id)
-                  ->orWhere('team_lead_id', $user->id);
+                    ->orWhere('team_lead_id', $user->id);
             });
         }
 
@@ -52,7 +52,7 @@ class ProjectApiController extends ApiController
         return $this->success($employees);
     }
 
-//code in probim main live
+    //code in probim main live
     // public function getEligibleManagers(): JsonResponse
     // {
     //     $allowedRoles = [
