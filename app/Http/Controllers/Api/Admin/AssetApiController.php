@@ -135,7 +135,11 @@ class AssetApiController extends Controller
         ]);
         $asset->update(['status' => 'Available']);
 
-        return response()->json(['message' => 'Asset revoked successfully'], 200);
+        return response()->json([
+            'asset' => $asset,
+            'assignment' => $assignment,
+            'message' => 'Asset revoked successfully'
+        ], 200);
     }
 
     #[OA\Delete(
@@ -197,10 +201,7 @@ class AssetApiController extends Controller
     )]
     public function employeeAssets($id)
     {
-        $assets = AssetAssignment::with([
-            'asset.type'
-        ])
-            ->where('employee_id', $id)
+        $assets = AssetAssignment::where('employee_id', $id)
             ->where('status', 'Active')
             ->get();
 
@@ -227,6 +228,46 @@ class AssetApiController extends Controller
                     'status' => $assignment->asset->status,
                     'type' => $assignment->asset->type,
                 ]
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Employee assets fetched successfully.',
+            'data' => $data
+        ], 200);
+    }
+
+    public function getEmployeeAssets($id)
+    {
+        $assets = AssetAssignment::where('employee_id', $id)->get();
+
+        if ($assets->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No active assets assigned to this employee.'
+            ], 404);
+        }
+
+        $data = $assets->map(function ($assignment) {
+            return [
+                'assignment_id' => $assignment->id,
+                'assigned_date' => $assignment->assigned_date,
+                'expected_return_date' => $assignment->expected_return_date,
+                'notes' => $assignment->notes,
+                'asset' => [
+                    'id' => $assignment->asset->id,
+                    'asset_name' => $assignment->asset->asset_name,
+                    'asset_code' => $assignment->asset->asset_code,
+                    'brand' => $assignment->asset->brand,
+                    'model' => $assignment->asset->model,
+                    'serial_number' => $assignment->asset->serial_number,
+                    'status' => $assignment->asset->status,
+                    'type' => $assignment->asset->type,
+                ],
+                'assignment_status' => $assignment->status,
+                'returned_date' => $assignment->returned_date,
+                'return_condition' => $assignment->return_condition,
             ];
         });
 

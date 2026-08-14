@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\ApiController;
+use App\Models\AssetAssignment;
 use App\Models\Employee;
 use App\Models\Offboarding;
 use App\Models\OffboardingChecklist;
@@ -87,6 +88,77 @@ class OffboardingApiController extends ApiController
     }
 
     // -------------------------------------------------------------------------
+    // STATS
+    // -------------------------------------------------------------------------
+
+    #[OA\Get(
+        path: '/api/admin/offboarding/stats',
+        operationId: 'getOffboardingStats',
+        summary: 'Get offboarding dashboard card statistics',
+        description: 'Returns aggregate counts for the offboarding dashboard cards: total, pending initiation, in progress, completed, and per-step pending counts (asset return, final settlement, visa cancellation, exit interview, letters & documents).',
+        security: [['bearerAuth' => []]],
+        tags: ['Offboarding']
+    )]
+    #[OA\Response(
+        response: 200,
+        description: 'Offboarding statistics fetched successfully',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'success', type: 'boolean', example: true),
+                new OA\Property(property: 'message', type: 'string', example: 'Offboarding statistics fetched successfully.'),
+                new OA\Property(
+                    property: 'data',
+                    type: 'object',
+                    properties: [
+                        new OA\Property(property: 'total_offboarding', type: 'integer', example: 24),
+                        new OA\Property(property: 'pending_initiation', type: 'integer', example: 3),
+                        new OA\Property(property: 'in_progress', type: 'integer', example: 15),
+                        new OA\Property(property: 'completed_offboarding', type: 'integer', example: 6),
+                        new OA\Property(property: 'pending_asset_return', type: 'integer', example: 9),
+                        new OA\Property(property: 'pending_final_settlement', type: 'integer', example: 11),
+                        new OA\Property(property: 'pending_visa_cancellation', type: 'integer', example: 5),
+                        new OA\Property(property: 'pending_exit_interview', type: 'integer', example: 7),
+                        new OA\Property(property: 'pending_letters_documents', type: 'integer', example: 13),
+                    ]
+                ),
+            ]
+        )
+    )]
+    #[OA\Response(response: 403, description: 'Unauthorized access')]
+    public function getStats(Request $request): JsonResponse
+    {
+        $query = Offboarding::with(['checklists', 'assets', 'interview', 'settlement', 'letters']);
+
+        $user = $request->user();
+
+        if ($user->type !== 'admin' && $user->role?->name !== 'HR Manager') {
+
+            if ($user->employee) {
+                $query->whereHas('employee', function ($q) use ($user) {
+                    $q->where('reporting_manager_id', $user->employee->id);
+                });
+            } else {
+                return $this->error('Unauthorized access', 403);
+            }
+        }
+
+        $offboardings = $query->get();
+        $activeOffboardings = $offboardings->where('status', '!=', 'completed');
+
+        return $this->success([
+            'total_offboarding' => $offboardings->count(),
+            'pending_initiation' => $offboardings->where('status', 'draft')->count(),
+            'in_progress' => $offboardings->whereNotIn('status', ['draft', 'completed'])->count(),
+            'completed_offboarding' => $offboardings->where('status', 'completed')->count(),
+            'pending_asset_return' => $activeOffboardings->filter(fn($o) => !$this->isAssetsReturned($o))->count(),
+            'pending_final_settlement' => $activeOffboardings->filter(fn($o) => !$this->isSettlementCompleted($o))->count(),
+            'pending_visa_cancellation' => $activeOffboardings->filter(fn($o) => !$this->isVisaCompleted($o))->count(),
+            'pending_exit_interview' => $activeOffboardings->filter(fn($o) => !$this->isInterviewCompleted($o))->count(),
+            'pending_letters_documents' => $activeOffboardings->filter(fn($o) => !$this->isLettersGenerated($o))->count(),
+        ], 'Offboarding statistics fetched successfully.');
+    }
+
+    // -------------------------------------------------------------------------
     // INITIATE
     // -------------------------------------------------------------------------
 
@@ -158,7 +230,7 @@ class OffboardingApiController extends ApiController
             [
                 'status' => $request->boolean('is_draft')
                     ? 'draft'
-                    : ($request->visa_sponsorship === 'non-applicable' ? 'pending_checklist' : 'pending_visa'),
+                    : 'pending_assets',
                 'last_working_day' => $request->last_working_day,
                 'separation_type' => $request->separation_type,
                 'notice_period_days' => $request->notice_period_days,
@@ -174,8 +246,8 @@ class OffboardingApiController extends ApiController
         return $this->success(
             $offboarding,
             $request->boolean('is_draft')
-            ? 'Offboarding draft saved successfully.'
-            : 'Offboarding process initiated successfully.'
+                ? 'Offboarding draft saved successfully.'
+                : 'Offboarding process initiated successfully.'
         );
     }
 
@@ -206,10 +278,14 @@ class OffboardingApiController extends ApiController
 
     public function getAllEmployees(): JsonResponse
     {
-        $employees = Employee::whereHas('user', function ($query) {
-            $query->where('type', '!=', 'admin')->where('status', 'active');
-        })
-            ->with(['user'])
+        $offboardingEmployeeIds = Offboarding::pluck('employee_id');
+
+        $employees = Employee::whereNotIn('id', $offboardingEmployeeIds)
+            ->whereHas('user', function ($query) {
+                $query->where('type', '!=', 'admin')
+                    ->where('status', '!=', 'offboarding');
+            })
+            ->with(['user.department', 'user.designation'])
             ->get()
             ->map(function ($employee) {
                 return [
@@ -563,7 +639,7 @@ class OffboardingApiController extends ApiController
     public function completeVisaStatus(Request $request, $id): JsonResponse
     {
         $offboarding = Offboarding::with([
-            'checklists' => fn($q) => $q->where('category_id', 'visa_cancellation'),
+            'checklists' => fn($q) => $q->where('category_id', 1),
         ])->find($id);
 
         if (!$offboarding) {
@@ -588,7 +664,7 @@ class OffboardingApiController extends ApiController
             );
         }
 
-        $offboarding->update(['status' => 'pending_checklist']);
+        $offboarding->update(['status' => 'pending_interview']);
 
         return $this->success(null, 'Visa cancellation process completed successfully.');
     }
@@ -736,9 +812,9 @@ class OffboardingApiController extends ApiController
     )]
     #[OA\Response(response: 403, description: 'Unauthorized')]
     #[OA\Response(response: 404, description: 'Offboarding record not found')]
-    public function updateAssets(Request $request, $id): JsonResponse
+    public function updateAssets(Request $request, $offboarding_id): JsonResponse
     {
-        $offboarding = Offboarding::find($id);
+        $offboarding = Offboarding::find($offboarding_id);
 
         if (!$offboarding) {
             return $this->error('Offboarding record not found.', 404);
@@ -749,16 +825,30 @@ class OffboardingApiController extends ApiController
         }
 
         foreach ($request->input('assets', []) as $asset) {
-            EmployeeAsset::where('id', $asset['id'])
-                ->where('offboarding_id', $offboarding->id)
-                ->update([
+            EmployeeAsset::updateOrCreate(
+                [
+                    'id' => $asset['id'],
+                    'employee_id' => $offboarding->employee->id,
+                    'offboarding_id' => $offboarding->id,
+                    'asset_name' => $asset['name'],
                     'status' => $asset['status'],
-                    'condition' => $asset['condition'] ?? null,
-                ]);
+                    'condition' => $asset['return_condition'] ?? null,
+                ]
+            );
+        }
+
+        // If all assets are completed, move offboarding to next step
+        if ($request->input('assets_status') === 'completed') {
+            $offboarding->update([
+                'status' => 'pending_settlement',
+            ]);
         }
 
         return $this->success(
-            $offboarding->load('assets'),
+            [
+                'assets' => EmployeeAsset::where('offboarding_id', $offboarding_id)->get(),
+                'status' => $offboarding->status
+            ],
             'Assets updated successfully.'
         );
     }
@@ -841,6 +931,8 @@ class OffboardingApiController extends ApiController
                 'additional_comments'
             ])
         );
+
+        $offboarding->update(['status' => 'pending_letters']);
 
         return $this->success($interview, 'Exit interview submitted successfully.');
     }
@@ -1163,6 +1255,13 @@ class OffboardingApiController extends ApiController
             $request->only(['total_payable', 'total_deductions', 'net_payable', 'status', 'remarks'])
         );
 
+        // If all assets are completed, move offboarding to next step
+        if ($request->input('status') === 'approved') {
+            $offboarding->update([
+                'status' => 'pending_visa',
+            ]);
+        }
+
         return $this->success($settlement, 'Settlement updated successfully.');
     }
 
@@ -1295,7 +1394,6 @@ class OffboardingApiController extends ApiController
             $letter->document_url = \Storage::disk('public')->url($storedPath);
 
             return $this->success($letter, 'Letter generated successfully.');
-
         } catch (\Exception $e) {
             \Log::error("Failed to generate {$letterType} for offboarding {$offboarding->id}: " . $e->getMessage());
             return $this->error('Failed to generate letter: ' . $e->getMessage(), 500);
@@ -1517,11 +1615,11 @@ class OffboardingApiController extends ApiController
                 'status' => $offboarding->id ? 'completed' : 'pending',
             ],
             [
-                'name' => 'Exit Interview',
-                'key' => 'interview',
-                'status' => $this->isInterviewCompleted($offboarding)
+                'name' => 'Asset Return',
+                'key' => 'asset',
+                'status' => $this->isAssetsReturned($offboarding)
                     ? 'completed'
-                    : ($offboarding->status === 'pending_interview' ? 'in_progress' : 'pending'),
+                    : ($offboarding->status === 'pending_assets' ? 'in_progress' : 'pending'),
             ],
             [
                 'name' => 'Final Settlement',
@@ -1529,6 +1627,22 @@ class OffboardingApiController extends ApiController
                 'status' => $this->isSettlementCompleted($offboarding)
                     ? 'completed'
                     : ($offboarding->status === 'pending_settlement' ? 'in_progress' : 'pending'),
+            ],
+            [
+                'name' => 'Visa Cancellation',
+                'key' => 'visa',
+                'status' => $this->isVisaCompleted($offboarding)
+                    ? 'completed'
+                    : ($offboarding->status === 'pending_visa'
+                        ? 'in_progress'
+                        : 'pending'),
+            ],
+            [
+                'name' => 'Exit Interview',
+                'key' => 'interview',
+                'status' => $this->isInterviewCompleted($offboarding)
+                    ? 'completed'
+                    : ($offboarding->status === 'pending_interview' ? 'in_progress' : 'pending'),
             ],
             [
                 'name' => 'Letters & Documents',
@@ -1615,13 +1729,19 @@ class OffboardingApiController extends ApiController
         }
 
         $offboarding->update(['status' => 'completed']);
+        // Deactivate the employee's user account
+        if ($offboarding->employee?->user) {
+            $offboarding->employee->user->update([
+                'status' => 'offboarding'
+            ]);
+        }
 
         return $this->success($offboarding->fresh(), 'Offboarding marked as completed successfully.');
     }
 
     // -------------------------------------------------------------------------
-// DELETE OFFBOARDING
-// -------------------------------------------------------------------------
+    // DELETE OFFBOARDING
+    // -------------------------------------------------------------------------
 
     #[OA\Delete(
         path: '/api/admin/offboarding/{id}',
@@ -1706,6 +1826,9 @@ class OffboardingApiController extends ApiController
                 $offboarding->settlement()->delete();
                 $offboarding->letters()->delete();
 
+                // Delete employee's asset assignments
+                AssetAssignment::where('employee_id', $offboarding->employee_id)->delete();
+
                 // Delete offboarding record
                 $offboarding->delete();
             });
@@ -1714,12 +1837,11 @@ class OffboardingApiController extends ApiController
                 null,
                 'Offboarding record deleted successfully.'
             );
-
         } catch (\Exception $e) {
 
             \Log::error(
                 "Failed to delete offboarding {$offboarding->id}: "
-                . $e->getMessage()
+                    . $e->getMessage()
             );
 
             return $this->error(
@@ -1731,13 +1853,18 @@ class OffboardingApiController extends ApiController
     /**
      * True when all visa_cancellation checklist tasks are done/not_applicable.
      */
+    // private function isVisaCompleted(Offboarding $offboarding): bool
+    // {
+    //     $visaTasks = $offboarding->checklists
+    //         ->where('category_id', 1);
+
+    //     return $visaTasks->isNotEmpty()
+    //         && $visaTasks->whereNotIn('status', ['completed', 'not_applicable'])->isEmpty();
+    // }
+
     private function isVisaCompleted(Offboarding $offboarding): bool
     {
-        $visaTasks = $offboarding->checklists
-            ->where('category_id', 'visa_cancellation');
-
-        return $visaTasks->isNotEmpty()
-            && $visaTasks->whereNotIn('status', ['completed', 'not_applicable'])->isEmpty();
+        return in_array($offboarding->cancellation_status, ['pending', 'completed']);
     }
 
     /**
@@ -1759,8 +1886,13 @@ class OffboardingApiController extends ApiController
     {
         $assets = $offboarding->assets ?? collect();
 
-        return $assets->isNotEmpty()
-            && $assets->where('status', '!=', 'Returned')->isEmpty();
+        // No assets assigned = asset return step completed
+        if ($assets->isEmpty()) {
+            return true;
+        }
+
+        // Assets exist = all must be returned
+        return $assets->where('status', '!=', 'returned')->isEmpty();
     }
 
     /**

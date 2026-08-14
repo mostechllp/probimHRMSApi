@@ -180,7 +180,7 @@ class StoreEmployeeRequest extends FormRequest
                 Rule::unique('employees', 'personal_email')
                     ->whereNull('deleted_at')
             ],
-            'status' => 'nullable|in:active,inactive,onboarding',
+            'status' => 'nullable|in:active,inactive,onboarding,offboarding',
             'username' => 'nullable|string|max:255|unique:users,username',
             'email' => [
                 'nullable',

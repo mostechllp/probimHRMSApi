@@ -235,8 +235,10 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::group(['prefix' => 'offboarding'], function () {
         Route::get('/', [OffboardingApiController::class, 'index'])->middleware('permission:offboarding.read');
         Route::post('/initiate', [OffboardingApiController::class, 'initiate'])->middleware('permission:offboarding.edit');
+        Route::put('/update-initiate', [OffboardingApiController::class, 'initiate'])->middleware('permission:offboarding.edit');
         Route::get('/reporting-managers', [OffboardingApiController::class, 'reportingManagers'])->middleware('permission:offboarding.read');
         Route::get('/employees', [OffboardingApiController::class, 'getAllEmployees'])->middleware('permission:offboarding.read');
+        Route::get('/stats', [OffboardingApiController::class, 'getStats'])->middleware('permission:offboarding.read');
         Route::get('/employees/salary-packages/{id}', [OffboardingApiController::class, 'getSalaryPackages'])->middleware('permission:offboarding.edit');
         Route::get('/{id}/visa-status', [OffboardingApiController::class, 'getVisaStatus'])->middleware('permission:offboarding.read');
         Route::post('/{id}/visa-status', [OffboardingApiController::class, 'updateVisaStatus'])->middleware('permission:offboarding.edit');
@@ -275,6 +277,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::group(['prefix' => 'assets'], function () {
         Route::apiResource('types', AssetTypeApiController::class);
 
+        Route::get('employee/{id}', [AssetApiController::class, 'getEmployeeAssets']);
         Route::get('/', [AssetApiController::class, 'index']);
         Route::post('/', [AssetApiController::class, 'store']);
 

@@ -181,7 +181,7 @@ class UpdateEmployeeRequest extends FormRequest
                     ->whereNull('deleted_at')
                     ->ignore($this->employee)
             ],
-            'status' => 'nullable|in:active,inactive,onboarding',
+            'status' => 'nullable|in:active,inactive,onboarding,offboarding',
             'total_leaves_allocated' => 'nullable|integer|min:0',
             'username' => 'nullable|string|max:255',
             'email' => [

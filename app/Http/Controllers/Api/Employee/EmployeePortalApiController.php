@@ -158,25 +158,58 @@ class EmployeePortalApiController extends ApiController
         }
 
         // Project assignments for this employee (project details + assignment details)
-        $projectAssignments = $user->projects()->get()->map(function ($project) {
-            return [
-                'project' => [
-                    'id' => $project->id,
-                    'name' => $project->name,
-                    'description' => $project->description,
-                    'project_manager_id' => $project->project_manager_id,
-                    'team_lead_id' => $project->team_lead_id,
-                    'total_hours' => $project->total_hours,
-                    'total_cost' => $project->total_cost,
-                    'currency' => $project->currency,
-                ],
-                'assignment' => [
-                    'assigned_by' => $project->pivot->assigned_by,
-                    'assigned_at' => $project->pivot->created_at,
-                    'updated_at' => $project->pivot->updated_at,
-                ],
-            ];
-        });
+        $projectAssignments = $user->projects()
+            ->with([
+                'projectManager.user.department',
+                'projectManager.user.designation',
+                'teamLead.user.department',
+                'teamLead.user.designation',
+            ])
+            ->get()
+            ->map(function ($project) {
+
+                $projectManager = $project->projectManager;
+                $teamLead = $project->teamLead;
+
+                return [
+                    'project' => [
+                        'id' => $project->id,
+                        'name' => $project->name,
+                        'description' => $project->description,
+                        'project_manager_id' => $project->project_manager_id,
+                        'team_lead_id' => $project->team_lead_id,
+                        'total_hours' => $project->total_hours,
+                        'total_cost' => $project->total_cost,
+                        'currency' => $project->currency,
+                    ],
+
+                    'project_manager' => $projectManager ? [
+                        'id' => $projectManager->id,
+                        'name' => trim(
+                            $projectManager->first_name . ' ' .
+                            $projectManager->last_name
+                        ),
+                        'department' => $projectManager->user?->department?->name,
+                        'designation' => $projectManager->user?->designation?->name,
+                    ] : null,
+
+                    'team_lead' => $teamLead ? [
+                        'id' => $teamLead->id,
+                        'name' => trim(
+                            $teamLead->first_name . ' ' .
+                            $teamLead->last_name
+                        ),
+                        'department' => $teamLead->user?->department?->name,
+                        'designation' => $teamLead->user?->designation?->name,
+                    ] : null,
+
+                    'assignment' => [
+                        'assigned_by' => $project->pivot->assigned_by,
+                        'assigned_at' => $project->pivot->created_at,
+                        'updated_at' => $project->pivot->updated_at,
+                    ],
+                ];
+            });
 
         return $this->success([
             'employee' => $user->employee,
@@ -1251,7 +1284,35 @@ class EmployeePortalApiController extends ApiController
                 return $this->error('Payslip template not found', 500);
             }
 
-            $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll]);
+            $monthStr = $payroll->pay_period_year . '-' . $payroll->pay_period_month;
+
+            $startDate = Carbon::createFromFormat('Y-m', $monthStr)->startOfMonth();
+            $endDate = Carbon::createFromFormat('Y-m', $monthStr)->endOfMonth();
+
+            // Fetch holidays in the selected month
+            $holidays = Holiday::whereBetween('holiday_date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->pluck('holiday_date')
+                ->map(fn($date) => Carbon::parse($date)->toDateString())
+                ->toArray();
+
+            $totalDays = $startDate->diffInDays($endDate) + 1;
+            $workingDays = 0;
+            $sundays = [];
+
+            $currentDate = $startDate->copy();
+            while ($currentDate->lte($endDate)) {
+                $dateStr = $currentDate->toDateString();
+                if ($currentDate->isSunday()) {
+                    $sundays[] = $dateStr;
+                } elseif (in_array($dateStr, $holidays)) {
+                    // Skip holiday
+                } else {
+                    $workingDays++;
+                }
+                $currentDate->addDay();
+            }
+
+            $pdf = Pdf::loadView('pdf.payslip', ['payroll' => $payroll, 'working_days' => $workingDays]);
             $monthName = Carbon::createFromFormat('m', $payroll->pay_period_month)->format('F');
             $fileName = "Payslip_{$monthName}_{$payroll->pay_period_year}.pdf";
 

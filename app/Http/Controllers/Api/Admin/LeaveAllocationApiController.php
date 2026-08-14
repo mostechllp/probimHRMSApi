@@ -19,9 +19,19 @@ class LeaveAllocationApiController extends ApiController
     {
         $leaveTypes = LeaveType::where('status', true)->get();
 
-        $employees = Employee::with(['user.designation', 'user.department', 'user.company', 'leaveAllocations' => function ($q) {
-            $q->where('year', date('Y'));
-        }])->get();
+        $employees = Employee::with([
+            'user.designation',
+            'user.department',
+            'user.company',
+            'leaveAllocations' => function ($q) {
+                $q->where('year', date('Y'));
+            }
+        ])
+            ->whereHas('user', function ($q) {
+                $q->where('type', '!=', 'admin')
+                    ->where('status', 'active');
+            })
+            ->get();
 
         $employeeData = $employees->map(function ($employee) use ($leaveTypes) {
             $allocations = [];
