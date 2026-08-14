@@ -19,6 +19,7 @@ return new class extends Migration {
                 'pending_interview',
                 'pending_settlement',
                 'pending_letters',
+                'pending_final',
                 'completed'
             ])->default('draft');
             $table->date('last_working_day')->nullable();

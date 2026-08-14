@@ -282,8 +282,7 @@ class OffboardingApiController extends ApiController
 
         $employees = Employee::whereNotIn('id', $offboardingEmployeeIds)
             ->whereHas('user', function ($query) {
-                $query->where('type', '!=', 'admin')
-                    ->where('status', '!=', 'offboarding');
+                $query->where('type', '!=', 'admin');
             })
             ->with(['user.department', 'user.designation'])
             ->get()
@@ -1502,6 +1501,75 @@ class OffboardingApiController extends ApiController
     }
 
     // -------------------------------------------------------------------------
+    // COMPLETE LETTERS & DOCUMENTS
+    // -------------------------------------------------------------------------
+
+    #[OA\Post(
+        path: '/api/admin/offboarding/{id}/letters/complete',
+        operationId: 'updateLetters',
+        summary: 'Complete the letters & documents stage',
+        description: 'Marks the letters & documents stage as completed and advances the offboarding status to `pending_final`. At least one letter must already be generated or uploaded.',
+        security: [['bearerAuth' => []]],
+        tags: ['Offboarding']
+    )]
+    #[OA\Parameter(
+        name: 'id',
+        in: 'path',
+        required: true,
+        description: 'Offboarding ID',
+        schema: new OA\Schema(type: 'integer', example: 1)
+    )]
+    #[OA\Response(
+        response: 200,
+        description: 'Letters & documents stage completed successfully',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'success', type: 'boolean', example: true),
+                new OA\Property(property: 'message', type: 'string', example: 'Letters & documents stage completed successfully.'),
+                new OA\Property(property: 'data', type: 'object'),
+            ]
+        )
+    )]
+    #[OA\Response(
+        response: 422,
+        description: 'No letters generated yet',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'success', type: 'boolean', example: false),
+                new OA\Property(property: 'message', type: 'string', example: 'At least one letter must be generated or uploaded before proceeding.'),
+            ]
+        )
+    )]
+    #[OA\Response(response: 403, description: 'Unauthorized')]
+    #[OA\Response(response: 404, description: 'Offboarding record not found')]
+    public function updateLetters(Request $request, $id): JsonResponse
+    {
+        $offboarding = Offboarding::with(['letters'])->find($id);
+
+        if (!$offboarding) {
+            return $this->error('Offboarding record not found.', 404);
+        }
+
+        if (!$this->isAuthorized($request->user(), $offboarding->employee)) {
+            return $this->error(
+                'You are not authorized to complete the letters stage for this employee.',
+                403
+            );
+        }
+
+        if (!$this->isLettersGenerated($offboarding)) {
+            return $this->error(
+                'At least one letter must be generated or uploaded before proceeding.',
+                422
+            );
+        }
+
+        $offboarding->update(['status' => 'pending_final']);
+
+        return $this->success($offboarding->fresh(), 'Letters & documents stage completed successfully.');
+    }
+
+    // -------------------------------------------------------------------------
     // GET PROGRESS
     // -------------------------------------------------------------------------
 
@@ -1594,6 +1662,7 @@ class OffboardingApiController extends ApiController
                 ? round(($completedSteps / $totalSteps) * 100)
                 : 0,
             'steps' => $steps,
+            'progress_steps' => $steps,
         ], 'Offboarding progress fetched successfully.');
     }
 
@@ -1650,7 +1719,15 @@ class OffboardingApiController extends ApiController
                 'status' => $this->isLettersGenerated($offboarding)
                     ? 'completed'
                     : ($offboarding->status === 'pending_letters' ? 'in_progress' : 'pending'),
+            ],
+            [
+                'name' => 'Final Clearance',
+                'key' => 'final',
+                'status' => $this->isFinalClearanceCompleted($offboarding)
+                    ? 'completed'
+                    : ($offboarding->status === 'completed' ? 'in_progress' : 'pending'),
             ]
+
         ];
     }
 
@@ -1718,12 +1795,14 @@ class OffboardingApiController extends ApiController
         }
 
         $pendingSteps = collect($this->getOffboardingSteps($offboarding))
+            ->where('key', '!=', 'final')
             ->where('status', '!=', 'completed')
             ->pluck('name');
 
         if ($pendingSteps->isNotEmpty()) {
             return $this->error(
-                'All offboarding steps must be completed first: ' . $pendingSteps->implode(', ') . '.',
+                'All offboarding steps must be completed first: ' .
+                    $pendingSteps->implode(', ') . '.',
                 422
             );
         }
@@ -1829,6 +1908,18 @@ class OffboardingApiController extends ApiController
                 // Delete employee's asset assignments
                 AssetAssignment::where('employee_id', $offboarding->employee_id)->delete();
 
+                $employee = Employee::where('employee_id', $offboarding->employee_id)
+                    ->whereHas('user', function ($query) {
+                        $query->where('status', 'offboarding');
+                    })
+                    ->first();
+
+                if ($employee) {
+                    $employee->user()->update([
+                        'status' => 'active',
+                    ]);
+                }
+
                 // Delete offboarding record
                 $offboarding->delete();
             });
@@ -1927,6 +2018,11 @@ class OffboardingApiController extends ApiController
             : $offboarding->letters()->get();
 
         return $letters->isNotEmpty();
+    }
+
+    private function isFinalClearanceCompleted(Offboarding $offboarding): bool
+    {
+        return $offboarding->status === 'completed';
     }
 
     /**

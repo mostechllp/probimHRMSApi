@@ -367,7 +367,7 @@ class LeaveApiController extends ApiController
     {
         $request->validate([
             'status'       => 'required|in:approved,rejected',
-            'remarks' => 'required|string',
+            'remarks' => 'nullable|string',
         ]);
 
         $authUser = auth('api')->user();
@@ -387,7 +387,7 @@ class LeaveApiController extends ApiController
                 [
                     'approver_level' => $approverType, // 'team_lead' or 'manager'
                     'status'         => $request->status,
-                    'remark'         => $request->remarks,
+                    'remark'         => $request->remarks ?? 'No remarks',
                 ]
             );
         } else {
@@ -401,14 +401,14 @@ class LeaveApiController extends ApiController
                 [
                     'approver_level' => 'hr',
                     'status'         => $request->status,
-                    'remark'         => $request->remarks,
+                    'remark'         => $request->remarks ?? 'No remarks',
                 ]
             );
 
             // Update the leave request itself
             $leaveRequest->update([
                 'status'       => $request->status,
-                'admin_remark' => $request->remarks,
+                'admin_remark' => $request->remarks ?? 'No remarks',
                 'approved_by'  => $authUser->id,
             ]);
         }
