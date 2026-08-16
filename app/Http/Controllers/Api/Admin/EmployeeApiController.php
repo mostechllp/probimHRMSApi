@@ -148,7 +148,7 @@ class EmployeeApiController extends ApiController
             if (array_key_exists('designation_id', $data))
                 $userData['designation_id'] = $data['designation_id'];
             if (array_key_exists('type', $data))
-                $userData['type'] = $data['type'];
+                $userData['type'] = $data['type'] ?? $employee->user->type;
             if (array_key_exists('status', $data))
                 $userData['status'] = $data['status'];
 
