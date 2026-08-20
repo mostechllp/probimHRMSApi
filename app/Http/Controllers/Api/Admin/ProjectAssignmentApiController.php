@@ -351,13 +351,60 @@ class ProjectAssignmentApiController extends ApiController
             $meta['date'] = $filterDate;
         }
 
-        if ($logs->isEmpty()) {
-            return $this->success(array_merge($meta, ['employees' => []]));
+        // ------------------------------------------------------------------
+        // Seed the result with every employee assigned to the relevant
+        // project(s) at zero hours, so employees with no time logs for the
+        // period still show up (with total_minutes/total_hours = 0) instead
+        // of being left out entirely. Real log data (below) then overwrites
+        // these zero entries wherever logs exist.
+        // ------------------------------------------------------------------
+        $scopeProjects = function ($q) use ($user, $projectId) {
+            if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
+                $q->where(function ($sub) use ($user) {
+                    $sub->where('project_manager_id', $user->id)
+                        ->orWhere('team_lead_id', $user->id);
+                });
+            }
+            if ($projectId) {
+                $q->where('projects.id', $projectId);
+            }
+        };
+
+        $assignedEmployeesQuery = Employee::withTrashed()
+            ->with(['projects' => $scopeProjects])
+            ->whereHas('projects', $scopeProjects);
+
+        if ($employeeId) {
+            $assignedEmployeesQuery->where('id', $employeeId);
+        }
+
+        $employeesByUserId = [];
+        foreach ($assignedEmployeesQuery->get() as $assignedEmployee) {
+            $projectBreakdown = $assignedEmployee->projects->map(function ($project) {
+                return [
+                    'project_id' => $project->id,
+                    'project_name' => $project->name,
+                    'total_minutes' => 0,
+                    'total_hours' => 0,
+                    'formatted' => $this->formatMinutes(0),
+                ];
+            })->values()->all();
+
+            $employeesByUserId[$assignedEmployee->user_id] = [
+                'id' => $assignedEmployee->id,
+                'user_id' => $assignedEmployee->user_id,
+                'employee_id' => $assignedEmployee->employee_id,
+                'name' => trim($assignedEmployee->first_name . ' ' . $assignedEmployee->last_name),
+                'avatar' => $assignedEmployee->avatar,
+                'total_minutes' => 0,
+                'total_hours' => 0,
+                'total_formatted' => $this->formatMinutes(0),
+                'projects' => $projectBreakdown,
+            ];
         }
 
         // Group logs by user_id then project_id
         $grouped = $logs->groupBy('user_id');
-        $employees = [];
 
         foreach ($grouped as $userId => $userLogs) {
             // Resolve employee record
@@ -384,7 +431,7 @@ class ProjectAssignmentApiController extends ApiController
             // Sort projects by most time spent first
             usort($projectBreakdown, fn($a, $b) => $b['total_minutes'] <=> $a['total_minutes']);
 
-            $employees[] = [
+            $employeesByUserId[$empRecord?->user_id ?? $userId] = [
                 'id' => $empRecord?->id,
                 'user_id' => $empRecord?->user_id ?? $userId,
                 'employee_id' => $empRecord?->employee_id,
@@ -398,6 +445,8 @@ class ProjectAssignmentApiController extends ApiController
                 'projects' => $projectBreakdown,
             ];
         }
+
+        $employees = array_values($employeesByUserId);
 
         // Sort employees by most time spent first
         usort($employees, fn($a, $b) => $b['total_minutes'] <=> $a['total_minutes']);

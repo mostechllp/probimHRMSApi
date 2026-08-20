@@ -37,7 +37,9 @@ class CheckDocumentExpiry extends Command
         $today = Carbon::today();
         $thresholdDate = $today->copy()->addDays($thresholdDays);
 
-        $adminUsers = User::all();
+        $adminUsers = User::whereIn('type', ['admin', 'hr'])
+            ->where('status', 'active')
+            ->get();
 
         if ($adminUsers->isEmpty()) {
             $this->warn('No admin users found to notify.');

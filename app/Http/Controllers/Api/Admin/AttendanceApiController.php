@@ -49,7 +49,7 @@ class AttendanceApiController extends ApiController
         ])
             ->whereHas('user', function ($query) {
                 $query->where('status', 'active')
-                    ->where('type', 'employee');
+                    ->where('type', '!=','admin');
             });
 
         // If the logged-in user is a manager or team lead,
@@ -455,6 +455,49 @@ class AttendanceApiController extends ApiController
     public function punchOutToday(Request $request): JsonResponse
     {
         return $this->getFilteredAttendance($request, 'today', 'punch_out');
+    }
+
+    /**
+     * Get punch-in/punch-out data for a specific employee on a specific date.
+     */
+    public function getPunchData(Request $request): JsonResponse
+    {
+        $request->validate([
+            'user_id' => 'required|integer|exists:users,id',
+            'date' => 'required|date',
+        ]);
+
+        $log = AttendanceLog::where('userid', $request->user_id)
+            ->whereDate('log_date', $request->date)
+            ->first();
+
+        if (!$log) {
+            return $this->error('No attendance record found for this employee on the given date.', 404);
+        }
+
+        $tz = config('app.timezone', 'Asia/Dubai');
+
+        return $this->success([
+            'user_id' => $log->userid,
+            'log_date' => Carbon::parse($log->log_date)->toDateString(),
+            'punch_in' => $log->punch_in ? Carbon::parse($log->punch_in)->setTimezone($tz)->format('h:i A') : null,
+            'punch_out' => $log->punch_out ? Carbon::parse($log->punch_out)->setTimezone($tz)->format('h:i A') : null,
+            'punch_in_location' => [
+                'latitude' => $log->punch_in_latitude,
+                'longitude' => $log->punch_in_longitude,
+                'address' => $log->punch_in_address,
+            ],
+            'punch_out_location' => [
+                'latitude' => $log->punch_out_latitude,
+                'longitude' => $log->punch_out_longitude,
+                'address' => $log->punch_out_address,
+            ],
+            'working_hours' => $log->working_hours,
+            'work_location' => $log->work_location,
+            'status' => $log->status,
+            'attendance_status' => $log->attendance_status,
+            'log_status' => $log->log_status,
+        ], 'Punch data fetched successfully.');
     }
 
     /**

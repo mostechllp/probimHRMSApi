@@ -39,6 +39,8 @@ use App\Http\Controllers\Api\Admin\AssetTypeApiController;
 use App\Http\Controllers\Api\Admin\AssetApiController;
 use App\Http\Controllers\Api\Admin\OffboardingChecklistCategoryController;
 use App\Http\Controllers\Api\Admin\PayrollController;
+use App\Http\Controllers\Api\Admin\TicketApiController as AdminTicketApiController;
+use App\Http\Controllers\Api\Employee\TicketApiController as EmployeeTicketApiController;
 
 
 /*
@@ -92,6 +94,10 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     // Employees
     Route::get('employees', [EmployeeApiController::class, 'index'])->middleware('permission:employees.read');
     Route::get('employees/salary-packages/{id}', [EmployeeOnboardingApiController::class, 'getSalaryPackages'])->middleware('permission:employees.edit');
+    Route::get('employees/onboarding', [EmployeeOnboardingApiController::class, 'index'])->middleware('permission:employees.read');
+    Route::get('employees/onboarding/{id}', [EmployeeOnboardingApiController::class, 'show'])->middleware('permission:employees.read');
+    Route::put('employees/onboarding/{id}', [EmployeeOnboardingApiController::class, 'update'])->middleware('permission:employees.edit');
+    Route::delete('employees/onboarding/{id}', [EmployeeOnboardingApiController::class, 'destroy'])->middleware('permission:employees.delete');
     Route::get('employees/{employee}', [EmployeeApiController::class, 'show'])->middleware('permission:employees.read');
     Route::post('employees', [EmployeeApiController::class, 'store'])->middleware('permission:employees.edit');
     Route::put('employees/{employee}', [EmployeeApiController::class, 'update'])->middleware('permission:employees.edit');
@@ -126,6 +132,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::get('attendance/punch-in-today', [AttendanceApiController::class, 'punchInToday'])->middleware('permission:attendance.read');
     Route::get('attendance/punch-in-yesterday', [AttendanceApiController::class, 'punchInYesterday'])->middleware('permission:attendance.read');
     Route::get('attendance/punch-out-today', [AttendanceApiController::class, 'punchOutToday'])->middleware('permission:attendance.read');
+    Route::get('attendance/punch-data', [AttendanceApiController::class, 'getPunchData'])->middleware('permission:attendance.read');
     Route::get('attendance/late-comers', [AttendanceApiController::class, 'lateComers'])->middleware('permission:attendance.read');
     Route::get('attendance/absentees', [AttendanceApiController::class, 'absentees'])->middleware('permission:attendance.read');
 
@@ -311,6 +318,16 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
         Route::put('{id}', [PayrollController::class, 'update'])->middleware('permission:payroll.edit');
         Route::delete('{id}', [PayrollController::class, 'destroy'])->middleware('permission:payroll.edit');
     });
+
+    // Ticket Management (Admin side)
+    Route::group(['prefix' => 'tickets'], function () {
+        Route::get('/', [AdminTicketApiController::class, 'index'])->middleware('permission:ticket-raise.read');
+        Route::get('/stats', [AdminTicketApiController::class, 'stats'])->middleware('permission:ticket-raise.read');
+        Route::get('/{id}', [AdminTicketApiController::class, 'show'])->middleware('permission:ticket-raise.read');
+        Route::put('/{id}', [AdminTicketApiController::class, 'update'])->middleware('permission:ticket-raise.edit');
+        Route::patch('/{id}/status', [AdminTicketApiController::class, 'updateStatus'])->middleware('permission:ticket-raise.edit');
+        Route::delete('/{id}', [AdminTicketApiController::class, 'destroy'])->middleware('permission:ticket-raise.delete');
+    });
 });
 
 // Employee Protected Routes (Now also using auth:api)
@@ -326,6 +343,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::get('leaves/{leave}', [EmployeePortalApiController::class, 'showLeave']);
     Route::get('leave-balance', [EmployeePortalApiController::class, 'leaveTypesAndBalance']);
     Route::post('leaves', [EmployeePortalApiController::class, 'storeLeave']);
+    Route::post('missed-punch-in-leave', [EmployeePortalApiController::class, 'storeMissedPunchInLeave']);
     Route::put('leaves/{leave}', [EmployeePortalApiController::class, 'updateLeave']);
     Route::post('leaves/{leave}', [EmployeePortalApiController::class, 'updateLeave']);
     Route::delete('leaves/{leave}', [EmployeePortalApiController::class, 'destroyLeave']);
@@ -346,12 +364,16 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::put('wfh-requests/{wfhRequest}', [EmployeePortalApiController::class, 'updateWfhRequest']);
     Route::delete('wfh-requests/{wfhRequest}', [EmployeePortalApiController::class, 'destroyWfhRequest']);
 
+    Route::get('attendance/punch-data', [AttendanceApiController::class, 'getPunchData']);
     // Attendance Requests
     Route::get('attendance-requests', [EmployeeAttendanceRequestApiController::class, 'index']);
     Route::post('attendance-requests', [EmployeeAttendanceRequestApiController::class, 'store']);
     Route::get('attendance-requests/{attendanceRequest}', [EmployeeAttendanceRequestApiController::class, 'show']);
     Route::put('attendance-requests/{attendanceRequest}', [EmployeeAttendanceRequestApiController::class, 'update']);
     Route::delete('attendance-requests/{attendanceRequest}', [EmployeeAttendanceRequestApiController::class, 'destroy']);
+
+    Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show']);
+    
 
     //Assets
     Route::get('assets/{id}', [AssetApiController::class, 'employeeAssets']);
@@ -368,6 +390,15 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::get('payroll/summary', [EmployeePortalApiController::class, 'mySalarySummary']);
     Route::get('payroll/history', [EmployeePortalApiController::class, 'mySalaryHistory']);
     Route::get('payroll/{id}/download', [EmployeePortalApiController::class, 'downloadMyPayslip']);
+
+    // Tickets (Employee Portal)
+    Route::get('tickets/modules', [EmployeeTicketApiController::class, 'modules']);
+    Route::get('tickets/stats', [EmployeeTicketApiController::class, 'stats']);
+    Route::get('tickets', [EmployeeTicketApiController::class, 'index']);
+    Route::post('tickets', [EmployeeTicketApiController::class, 'store']);
+    Route::get('tickets/{id}', [EmployeeTicketApiController::class, 'show']);
+    Route::put('tickets/{id}', [EmployeeTicketApiController::class, 'update']);
+    Route::delete('tickets/{id}', [EmployeeTicketApiController::class, 'destroy']);
 });
 
 

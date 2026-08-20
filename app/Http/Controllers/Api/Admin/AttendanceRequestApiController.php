@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\AttendanceRequest;
+use App\Models\AttendanceLog;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
@@ -75,6 +76,31 @@ class AttendanceRequestApiController extends ApiController
         $attendanceRequest->update([
             'status' => $request->status,
         ]);
+
+        if ($request->status == 'approved') {
+            $employee = $attendanceRequest->employee;
+
+            if ($employee && $employee->user_id) {
+                $timezone = $attendanceRequest->timezone ?: config('app.timezone');
+
+                $punchInDateTime = Carbon::createFromFormat(
+                    'Y-m-d H:i:s',
+                    $attendanceRequest->request_date . ' ' . $attendanceRequest->request_time,
+                    $timezone
+                );
+
+                $log = AttendanceLog::firstOrNew([
+                    'userid' => $employee->user_id,
+                    'log_date' => $attendanceRequest->request_date,
+                ]);
+
+                $log->punch_in = $punchInDateTime;
+                $log->status = 1;
+                $log->log_status = $log->log_status ?: 'IN';
+                $log->timezone = $timezone;
+                $log->save();
+            }
+        }
 
         return $this->success($attendanceRequest, 'Request status updated successfully.');
     }

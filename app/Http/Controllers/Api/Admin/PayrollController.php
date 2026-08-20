@@ -1348,12 +1348,11 @@ class PayrollController extends Controller
             $fileName = "Payslip_{$monthName}_{$payroll->pay_period_year}.pdf";
 
             return $pdf->download($fileName);
-
         } catch (\Exception $e) {
 
             \Log::error(
                 "Failed to generate PDF for payroll {$payroll->id}: "
-                . $e->getMessage()
+                    . $e->getMessage()
             );
 
             return response()->json([
@@ -1914,10 +1913,10 @@ class PayrollController extends Controller
             'step_1' => [
                 'pay_period_month' => (int) $monthDate->format('m'),
                 'pay_period_year' => (int) $monthDate->format('Y'),
-                'period_start' => null,
-                'period_end' => null,
-                'payment_date' => null,
-                'payment_mode' => null,
+                'period_start' => $startDate,
+                'period_end' =>$endDate,
+                'payment_date' => $monthDate->copy()->addMonth()->day(5)->format('Y-m-d'),
+                'payment_mode' => 'Bank Transfer',
                 'total_working_days' => $workingDays,
                 'days_present' => $attendanceLogs->count(),
             ],

@@ -224,16 +224,28 @@ class DashboardApiController extends ApiController
             return ["name" => $item->name, "employees" => (int) $item->employees];
         })->toArray();
 
-        // 7. PROJECT HOURS
-        $projectHoursData = ProjectTimeLog::join('projects', 'project_time_logs.project_id', '=', 'projects.id')
-            ->select('projects.name', DB::raw('SUM(time_taken_minutes) as total_minutes'))
+        $projectHoursData = ProjectTimeLog::join(
+            'projects',
+            'project_time_logs.project_id',
+            '=',
+            'projects.id'
+        )
+            ->whereYear('project_time_logs.date', now()->year)
+            ->whereMonth('project_time_logs.date', now()->month)
+            ->select(
+                'projects.name',
+                DB::raw('SUM(time_taken_minutes) as total_minutes')
+            )
             ->groupBy('projects.id', 'projects.name')
             ->orderByDesc('total_minutes')
             ->take(8)
             ->get();
 
         $projectHours = $projectHoursData->map(function ($item) {
-            return ["name" => $item->name, "hours" => round($item->total_minutes / 60)];
+            return [
+                'name' => $item->name,
+                'hours' => round($item->total_minutes / 60, 2),
+            ];
         })->toArray();
 
         // 8. WEEKLY ATTENDANCE

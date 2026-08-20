@@ -134,7 +134,25 @@ class LeaveApiController extends ApiController
         if (!$employee)
             return $this->error('Employee profile not found', 404);
 
+         // Check if there are overlapping leaves
+        $hasOverlap = LeaveRequest::where('employee_id', $employee->id)
+            ->where('status', '!=', 'rejected')
+            ->where(function ($q) use ($request) {
+                $q->where('start_date', '<=', $request->end_date)
+                    ->where('end_date', '>=', $request->start_date);
+            })
+            ->exists();
+
+        if ($hasOverlap) {
+            return $this->error('You have already applied/taken leave on the selected date(s).', 422);
+        }
+
         $leaveType = LeaveType::find($request->leave_type_id);
+
+        // Check for sick leave document
+        if (str_contains(strtolower($leaveType->name), 'sick') && !$request->hasFile('document')) {
+            return $this->error('Medical certificate is required for sick leave', 422);
+        }
 
         // -- Duration calculation based on session1 / session2, excluding Sundays --
         // session1 = session for start_date: 'morning' (from morning = full) | 'afternoon' (from afternoon = half)

@@ -20,9 +20,12 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
+use App\Mail\RequestNotificationMail;
+use App\Models\User;
 
 class EmployeePortalApiController extends ApiController
 {
@@ -211,6 +214,61 @@ class EmployeePortalApiController extends ApiController
                 ];
             });
 
+        // ── Missed punch-in days (last 30 days, scheduled working days only) ──
+        $loggedDates = AttendanceLog::where('userid', $user->id)
+            ->whereBetween('log_date', [$from, $to])
+            ->pluck('log_date')
+            ->map(fn($d) => Carbon::parse($d)->toDateString())
+            ->unique();
+
+        $holidayDates = Holiday::whereBetween('holiday_date', [$from->toDateString(), $to->toDateString()])
+            ->pluck('holiday_date')
+            ->map(fn($d) => Carbon::parse($d)->toDateString())
+            ->toArray();
+
+        $leaveDates = [];
+        LeaveRequest::where('employee_id', $leave_employee_id->id)
+            ->where('status', 'approved')
+            ->whereDate('end_date', '>=', $from->toDateString())
+            ->whereDate('start_date', '<=', $to->toDateString())
+            ->get(['start_date', 'end_date'])
+            ->each(function ($leave) use (&$leaveDates, $from, $to) {
+                $cursor = Carbon::parse($leave->start_date)->max($from);
+                $end = Carbon::parse($leave->end_date)->min($to);
+                while ($cursor->lte($end)) {
+                    $leaveDates[] = $cursor->toDateString();
+                    $cursor->addDay();
+                }
+            });
+
+        $enabledWorkingDays = WorkingHour::where('is_enabled', true)->pluck('day')->toArray();
+
+        $joiningDate = $leave_employee_id->joining_date ? Carbon::parse($leave_employee_id->joining_date) : null;
+        $rangeStart = ($joiningDate && $joiningDate->gt($from)) ? $joiningDate->copy() : $from->copy();
+        $rangeEnd = Carbon::yesterday()->lt($to) ? Carbon::yesterday() : $to->copy();
+
+        $missedPunchIns = [];
+        $cursor = $rangeStart->copy();
+        while ($cursor->lte($rangeEnd)) {
+            $dateStr = $cursor->toDateString();
+            $dayName = $cursor->format('l');
+
+            $isWorkingDay = in_array($dayName, $enabledWorkingDays);
+            $isSunday = $cursor->isSunday();
+            $isHoliday = in_array($dateStr, $holidayDates);
+            $isOnLeave = in_array($dateStr, $leaveDates);
+            $hasPunched = $loggedDates->contains($dateStr);
+
+            if ($isWorkingDay && !$isSunday && !$isHoliday && !$isOnLeave && !$hasPunched) {
+                $missedPunchIns[] = [
+                    'date' => $dateStr,
+                    'day' => $dayName,
+                ];
+            }
+
+            $cursor->addDay();
+        }
+
         return $this->success([
             'employee' => $user->employee,
             'today_attendance' => [
@@ -243,6 +301,10 @@ class EmployeePortalApiController extends ApiController
             'pending_wfh_count' => WfhRequest::where('employee_id', $employee->id)->where('status', 'pending')->count(),
             'recent_leaves' => LeaveRequest::where('employee_id', $employee->id)->latest()->take(5)->get(),
             'project_assignments' => $projectAssignments,
+            'missed_punch_ins' => [
+                'count' => count($missedPunchIns),
+                'days' => $missedPunchIns,
+            ],
         ]);
     }
 
@@ -293,15 +355,27 @@ class EmployeePortalApiController extends ApiController
         // If working hours are configured for today and the employee is trying
         // to punch in more than 10 minutes after the scheduled start_time,
         // block the punch-in and raise a late_check_in attendance request.
-        $workingHour = WorkingHour::where('day', $dayName)
-            ->where('is_enabled', true)
-            ->first();
+        $scheduledStartTime = null;
+        $tzLower = strtolower($timezone);
 
-        if ($workingHour && !empty($workingHour->start_time)) {
+        if (str_contains($tzLower, 'kolkata') || str_contains($tzLower, 'calcutta') || str_contains($tzLower, 'india')) {
+            $scheduledStartTime = '10:30:00';
+        } elseif (str_contains($tzLower, 'dubai') || str_contains($tzLower, 'uae') || str_contains($tzLower, 'asia/dubai')) {
+            $scheduledStartTime = '09:00:00';
+        } else {
+            $workingHour = WorkingHour::where('day', $dayName)
+                ->where('is_enabled', true)
+                ->first();
+            if ($workingHour && !empty($workingHour->start_time)) {
+                $scheduledStartTime = $workingHour->start_time;
+            }
+        }
+
+        if ($scheduledStartTime) {
             // Build today's scheduled start as a full Carbon datetime
             $scheduledStart = Carbon::createFromFormat(
                 'Y-m-d H:i:s',
-                $today . ' ' . $workingHour->start_time,
+                $today . ' ' . $scheduledStartTime,
                 $timezone
             );
 
@@ -323,7 +397,7 @@ class EmployeePortalApiController extends ApiController
             } // positive = late
 
             if ($minutesLate > 10) {
-                $scheduledStartFormatted = Carbon::createFromFormat('H:i:s', $workingHour->start_time)->format('h:i A');
+                $scheduledStartFormatted = Carbon::createFromFormat('H:i:s', $scheduledStartTime)->format('h:i A');
 
                 // Check if an approved late_check_in request exists for today
                 $approvedRequest = AttendanceRequest::where('employee_id', $employee->id)
@@ -346,16 +420,17 @@ class EmployeePortalApiController extends ApiController
 
                     if (!$pendingRequest) {
                         // No request at all — auto-create one now
-                        AttendanceRequest::create([
+                        $newAttendanceRequest = AttendanceRequest::create([
                             'employee_id' => $employee->id,
                             'type' => 'late_check_in',
                             'request_date' => $today,
                             'request_time' => $now->format('H:i:s'),
-                            'reason' => "Employee attempted to punch in {$lateDuration} late (scheduled: {$workingHour->start_time}).",
+                            'reason' => "Employee attempted to punch in {$lateDuration} late (scheduled: {$scheduledStartTime}).",
                             'status' => 'pending',
                             'timezone' => $timezone,
                             'created_by' => 'admin'
                         ]);
+                        $this->notifyHrAdmins('Attendance Request', 'created', $newAttendanceRequest);
 
                         return $this->error(
                             "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
@@ -401,8 +476,8 @@ class EmployeePortalApiController extends ApiController
             'punch_out_longitude' => 'nullable|numeric',
             'punch_out_address' => 'nullable|string',
             'project_times' => 'nullable|array',
-            'project_times.*.project_id' => 'nullable|exists:projects,id',
-            'project_times.*.time_minutes' => 'nullable|integer|min:1',
+            'project_times.*.project_id' => 'required|exists:projects,id',
+            'project_times.*.time_minutes' => 'required|integer|min:0',
             'timezone' => 'nullable|string|timezone',
             'punch_out_time' => 'nullable|string'
         ]);
@@ -684,6 +759,19 @@ class EmployeePortalApiController extends ApiController
         if (!$employee)
             return $this->error('Employee profile not found', 404);
 
+        // Check if there are overlapping leaves
+        $hasOverlap = LeaveRequest::where('employee_id', $employee->id)
+            ->where('status', '!=', 'rejected')
+            ->where(function ($q) use ($request) {
+                $q->where('start_date', '<=', $request->end_date)
+                    ->where('end_date', '>=', $request->start_date);
+            })
+            ->exists();
+
+        if ($hasOverlap) {
+            return $this->error('You have already applied/taken leave on the selected date(s).', 422);
+        }
+
         $leaveType = LeaveType::find($request->leave_type_id);
 
         // Check for sick leave document
@@ -767,6 +855,129 @@ class EmployeePortalApiController extends ApiController
             'applied_by' => auth::id(),
             'status' => 'pending',
         ]);
+
+        $this->notifyHrAdmins('Leave Request', 'created', $leave);
+
+        return $this->success($leave, 'Leave request submitted successfully', 201);
+    }
+
+    public function storeMissedPunchInLeave(Request $request): JsonResponse
+    {
+        $request->validate([
+            'employee_id' => 'required|exists:employees,id',
+            'leave_type_id' => 'required|exists:leave_types,id',
+            'start_date' => 'required|date',
+            'end_date' => 'required|date',
+            'reason' => 'required|string|min:10',
+            'claim_salary' => 'nullable|boolean',
+            'document' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:2048',
+            'session1' => 'nullable|in:morning,afternoon',  // session for start date
+            'session2' => 'nullable|in:morning,afternoon',  // session for end date
+            'year' => 'nullable|integer',
+        ]);
+
+        $employee = Employee::find($request->employee_id);
+        if (!$employee)
+            return $this->error('Employee profile not found', 404);
+
+        // Check if there are overlapping leaves
+        $hasOverlap = LeaveRequest::where('employee_id', $employee->id)
+            ->where('status', '!=', 'rejected')
+            ->where(function ($q) use ($request) {
+                $q->where('start_date', '<=', $request->end_date)
+                    ->where('end_date', '>=', $request->start_date);
+            })
+            ->exists();
+
+        if ($hasOverlap) {
+            return $this->error('You have already applied/taken leave on the selected date(s).', 422);
+        }
+
+        $leaveType = LeaveType::find($request->leave_type_id);
+
+        // Check for sick leave document
+        if (str_contains(strtolower($leaveType->name), 'sick') && !$request->hasFile('document')) {
+            return $this->error('Medical certificate is required for sick leave', 422);
+        }
+
+        // ── Duration calculation based on session1 / session2, excluding Sundays ──
+        // session1 = session for start_date: 'morning' (from morning = full) | 'afternoon' (from afternoon = half)
+        // session2 = session for end_date:   'morning' (until morning = half) | 'afternoon' (until afternoon = full)
+        $start = Carbon::parse($request->start_date);
+        $end = Carbon::parse($request->end_date);
+        $session1 = $request->input('session1', 'morning');   // default: full start day
+        $session2 = $request->input('session2', 'afternoon'); // default: full end day
+
+        $durationDays = 0.0;
+        $currentDate = $start->copy();
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
+
+        while ($currentDate->lte($end)) {
+            if ($currentDate->isSunday() || in_array($currentDate->toDateString(), $holidays)) {
+                $currentDate->addDay();
+                continue;
+            }
+
+            if ($currentDate->isSameDay($start) && $currentDate->isSameDay($end)) {
+                if ($session1 === 'morning' && $session2 === 'afternoon') {
+                    $durationDays += 1.0;
+                } else {
+                    $durationDays += 0.5;
+                }
+            } elseif ($currentDate->isSameDay($start)) {
+                $durationDays += ($session1 === 'morning') ? 1.0 : 0.5;
+            } elseif ($currentDate->isSameDay($end)) {
+                $durationDays += ($session2 === 'afternoon') ? 1.0 : 0.5;
+            } else {
+                $durationDays += 1.0;
+            }
+
+            $currentDate->addDay();
+        }
+
+        // Balance check
+        $currentYear = $request->input('year', date('Y'));
+        $allocation = LeaveAllocation::where('employee_id', $employee->id)
+            ->where('leave_type_id', $request->leave_type_id)
+            ->where('year', $currentYear)
+            ->first();
+
+        $allocated = $allocation ? (float) $allocation->allocated_days : 0;
+
+        $leavesTaken = LeaveRequest::where('employee_id', $employee->id)
+            ->where('leave_type_id', $request->leave_type_id)
+            ->where('status', 'approved')
+            ->sum('duration_days');
+
+        $remainingBalance = $allocated - $leavesTaken;
+
+        if ($durationDays > $remainingBalance) {
+            return $this->error("Insufficient leave balance. You have only $remainingBalance days remaining.", 422);
+        }
+
+        $documentPath = null;
+        if ($request->hasFile('document')) {
+            $documentPath = $request->file('document')->store('leaves/documents', 'public');
+        }
+
+        $leave = LeaveRequest::create([
+            'employee_id' => $employee->id,
+            'leave_type_id' => $request->leave_type_id,
+            'start_date' => $request->start_date,
+            'end_date' => $request->end_date,
+            'session1' => $request->input('session1', 'morning'),
+            'session2' => $request->input('session2', 'afternoon'),
+            'duration_days' => $durationDays,
+            'claim_salary' => $request->claim_salary ?? false,
+            'document' => $documentPath,
+            'reason' => $request->reason,
+            'applied_by' => auth::id(),
+            'status' => 'pending',
+        ]);
+
+        $this->notifyHrAdmins('Leave Request', 'created', $leave);
 
         return $this->success($leave, 'Leave request submitted successfully', 201);
     }
@@ -908,6 +1119,8 @@ class EmployeePortalApiController extends ApiController
             'reason' => $request->reason,
             'applied_by' => auth::id(),
         ]);
+
+        $this->notifyHrAdmins('Leave Request', 'updated', $leave);
 
         return $this->success($leave, 'Leave request updated successfully');
     }
@@ -1072,6 +1285,8 @@ class EmployeePortalApiController extends ApiController
             'status' => 'pending'
         ]);
 
+        $this->notifyHrAdmins('Work From Home Request', 'created', $wfh);
+
         return $this->success($wfh, 'WFH request submitted successfully', 201);
     }
 
@@ -1099,6 +1314,8 @@ class EmployeePortalApiController extends ApiController
         }
 
         $wfh->update($request->only(['date', 'reason', 'notes']));
+
+        $this->notifyHrAdmins('Work From Home Request', 'updated', $wfh);
 
         return $this->success($wfh, 'WFH request updated successfully');
     }
@@ -1489,5 +1706,29 @@ class EmployeePortalApiController extends ApiController
 
         $request->merge($inputs);
         $request->files->add($files);
+    }
+
+    /**
+     * Send an email notification to all HR and Admin users.
+     *
+     * @param string $requestType  Human-readable request type label (e.g. "Leave Request")
+     * @param string $action       'created' or 'updated'
+     * @param mixed  $requestModel The Eloquent model instance that was created/updated
+     */
+    private function notifyHrAdmins(string $requestType, string $action, $requestModel): void
+    {
+        try {
+            $hrAdmins = User::whereIn('type', ['hr', 'admin'])
+                ->whereNotNull('email')
+                ->get();
+
+            foreach ($hrAdmins as $recipient) {
+                Mail::to($recipient->email)
+                    ->send(new RequestNotificationMail($requestType, $action, $requestModel));
+            }
+        } catch (\Throwable $e) {
+            // Log silently — do not break the request flow
+            \Illuminate\Support\Facades\Log::error('RequestNotificationMail failed: ' . $e->getMessage());
+        }
     }
 }

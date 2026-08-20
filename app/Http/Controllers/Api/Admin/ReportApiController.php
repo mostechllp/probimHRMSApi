@@ -32,6 +32,66 @@ use Barryvdh\DomPDF\Facade\Pdf;
 class ReportApiController extends ApiController
 {
     /**
+     * Reference AED → INR rate used to convert employee salaries into a
+     * project's currency for cost reporting. There is no live/stored
+     * exchange-rate source in this app, so this is a manually-set snapshot.
+     * Sourced from xe.com on the date below — update it periodically.
+     */
+    private const AED_TO_INR_RATE = 26.06;
+    private const AED_INR_RATE_DATE = '2026-08-20';
+
+    /**
+     * Fallback currency used whenever a project/salary package has no
+     * currency set at all, so cost math never has to work with null.
+     */
+    private const DEFAULT_CURRENCY = 'AED';
+
+    /**
+     * Convert an amount between AED and INR using the reference rate above.
+     * Any other currency pair (or a same-currency conversion) is returned
+     * unconverted, since no rate is available for it. Null currencies are
+     * treated as DEFAULT_CURRENCY rather than erroring.
+     */
+    private function convertCurrency(float $amount, ?string $fromCurrency, ?string $toCurrency): float
+    {
+        $fromCurrency = strtoupper($fromCurrency ?: self::DEFAULT_CURRENCY);
+        $toCurrency = strtoupper($toCurrency ?: self::DEFAULT_CURRENCY);
+
+        if ($fromCurrency === $toCurrency) {
+            return $amount;
+        }
+
+        if ($fromCurrency === 'AED' && $toCurrency === 'INR') {
+            return $amount * self::AED_TO_INR_RATE;
+        }
+
+        if ($fromCurrency === 'INR' && $toCurrency === 'AED') {
+            return $amount / self::AED_TO_INR_RATE;
+        }
+
+        // No known rate for this currency pair — return unconverted rather
+        // than silently applying the wrong rate.
+        return $amount;
+    }
+
+    /**
+     * Classify an attendance record's timezone into the salary-currency
+     * region it implies ('INR' for India, 'AED' for UAE). Same timezone
+     * groupings already used for IST/GST display elsewhere in this app
+     * (AttendanceRequestApiController::index, ProjectAssignmentApiController
+     * ::monthlyProjectHours). Returns null when the timezone doesn't match
+     * either known region.
+     */
+    private function classifyTimezoneRegion(?string $timezone): ?string
+    {
+        return match ($timezone) {
+            'Asia/Kolkata', 'Asia/Calcutta', 'IST', '+05:30', 'UTC+05:30' => 'INR',
+            'Asia/Dubai', 'GST', '+04:00', 'UTC+04:00' => 'AED',
+            default => null,
+        };
+    }
+
+    /**
      * Attendance Report Listing
      */
     //main
@@ -1611,13 +1671,27 @@ class ReportApiController extends ApiController
             ->get()
             ->keyBy('user_id');
 
+        // ── 3b. Pre-load that month's attendance logs, keyed by "userId|date",
+        //        so we can tell which country/timezone each day was worked
+        //        from and cost it against the matching salary package.
+        $attendanceByUserDate = AttendanceLog::whereIn('userid', $allUserIds)
+            ->whereYear('log_date', $year)
+            ->whereMonth('log_date', $month)
+            ->get(['userid', 'log_date', 'timezone'])
+            ->keyBy(fn($log) => $log->userid . '|' . Carbon::parse($log->log_date)->toDateString());
+
         // ── 4. Build the report ─────────────────────────────────────────────
         $reportData = [];
+
+        $daysInMonth = Carbon::createFromDate($year, $month, 1)->daysInMonth;
+        $workingHoursPerDay = 9;
+        $totalMonthlyHours = $daysInMonth * $workingHoursPerDay;
 
         foreach ($projects as $project) {
             $totalActualMinutes = 0;
             $totalActualCost = 0;
             $employeeBreakdown = [];
+            $projectCurrency = $project->currency ?: self::DEFAULT_CURRENCY;
 
             // Group logs by user so each employee appears once
             $logsByUser = $project->timeLogs->groupBy('user_id');
@@ -1629,24 +1703,68 @@ class ReportApiController extends ApiController
                     continue;
                 }
 
-                // ── Actual time ─────────────────────────────────────────────
-                $userMinutes = $logs->sum('time_taken_minutes');
-                $totalActualMinutes += $userMinutes;
+                $activePackages = $employee->salaryPackages->where('is_active', true);
 
-                // ── Gross salary from active AED package ────────────────────
-                //    Falls back to the first active package of any currency.
-                $activePackage = $employee->salaryPackages
-                    ->where('is_active', true)
-                    ->sortByDesc(fn($p) => strtoupper($p->currency) === 'AED' ? 1 : 0)
+                // Fallback package when a day's location can't be determined
+                // (no attendance record, no timezone, or unrecognised
+                // timezone) — same AED-preferred behaviour as before.
+                $fallbackPackage = $activePackages
+                    ->sortByDesc(fn($p) => strtoupper($p->currency ?? '') === 'AED' ? 1 : 0)
                     ->first();
 
-                $grossSalary = $activePackage
-                    ? $activePackage->salaryComponents->sum('value')
-                    : 0;
+                $userMinutes = 0;
+                $userCost = 0;
+                $currencyBreakdown = [];
 
-                // ── Implied hourly rate: gross / (30 days × 8 hrs = 240 hrs) ─
-                $hourlyRate = $grossSalary > 0 ? ($grossSalary / 240) : 0;
-                $userCost = round(($userMinutes / 60) * $hourlyRate, 2);
+                // Split this employee's logs by day so each day can be
+                // costed against the package that matches where they were
+                // actually working (per that day's attendance timezone).
+                $logsByDate = $logs->groupBy(fn($log) => Carbon::parse($log->date)->toDateString());
+
+                foreach ($logsByDate as $dateStr => $dayLogs) {
+                    $dayMinutes = $dayLogs->sum('time_taken_minutes');
+                    $userMinutes += $dayMinutes;
+
+                    $attendance = $attendanceByUserDate->get($userId . '|' . $dateStr);
+                    $region = $attendance ? $this->classifyTimezoneRegion($attendance->timezone) : null;
+
+                    $dayPackage = $region
+                        ? $activePackages->first(fn($p) => strtoupper($p->currency ?? '') === $region)
+                        : null;
+                    $dayPackage = $dayPackage ?? $fallbackPackage;
+
+                    $dayGrossSalary = $dayPackage
+                        ? $dayPackage->salaryComponents->sum('value')
+                        : 0;
+                    $dayCurrency = $dayPackage?->currency ?: $projectCurrency;
+
+                    $dayGrossConverted = $this->convertCurrency(
+                        (float) $dayGrossSalary,
+                        $dayCurrency,
+                        $projectCurrency
+                    );
+
+                    $dayHourlyRate = $dayGrossConverted > 0 && $totalMonthlyHours > 0
+                        ? ($dayGrossConverted / $totalMonthlyHours)
+                        : 0;
+
+                    $dayHours = round($dayMinutes / 60, 2);
+                    $dayCost = round($dayHours * $dayHourlyRate, 2);
+                    $userCost += $dayCost;
+
+                    if (!isset($currencyBreakdown[$dayCurrency])) {
+                        $currencyBreakdown[$dayCurrency] = [
+                            'currency' => $dayCurrency,
+                            'hours' => 0,
+                            'cost' => 0,
+                        ];
+                    }
+                    $currencyBreakdown[$dayCurrency]['hours'] += $dayHours;
+                    $currencyBreakdown[$dayCurrency]['cost'] += $dayCost;
+                }
+
+                $userCost = round($userCost, 2);
+                $totalActualMinutes += $userMinutes;
                 $totalActualCost += $userCost;
 
                 $employeeBreakdown[] = [
@@ -1654,21 +1772,29 @@ class ReportApiController extends ApiController
                     'user_id' => $userId,
                     'name' => trim($employee->first_name . ' ' . $employee->last_name),
                     'designation' => $employee->user->designation->name ?? 'N/A',
-                    'gross_salary' => round((float) $grossSalary, 2),
-                    'implied_hourly_rate' => round($hourlyRate, 2),
                     'actual_time_logged_hours' => round($userMinutes / 60, 2),
                     'actual_cost' => $userCost,
+                    'cost_currency' => $projectCurrency,
+                    'currency_breakdown' => array_values(array_map(function ($row) {
+                        $row['hours'] = round($row['hours'], 2);
+                        $row['cost'] = round($row['cost'], 2);
+                        return $row;
+                    }, $currencyBreakdown)),
                 ];
             }
 
             $reportData[] = [
                 'project_id' => $project->id,
                 'project_name' => $project->name,
-                'currency' => $project->currency,
+                'currency' => $projectCurrency,
                 'planned_total_hours' => $project->total_hours,
                 'planned_total_cost' => $project->total_cost,
                 'actual_time_logged_hours' => round($totalActualMinutes / 60, 2),
                 'actual_cost' => round($totalActualCost, 2),
+                'conversion_rate_note' => 'Employee costs in a different salary currency were converted to '
+                    . $projectCurrency . ' using ' . self::AED_INR_RATE_DATE . "'s reference rate "
+                    . '(1 AED = ' . self::AED_TO_INR_RATE . ' INR) before being totalled.'
+                    . ($project->currency ? '' : " (project had no currency set — defaulted to {$projectCurrency})."),
                 'employee_breakdown' => $employeeBreakdown,
             ];
         }

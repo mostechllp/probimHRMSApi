@@ -38,7 +38,9 @@ class CheckProbationContractExpiry extends Command
         $notifiedCount = 0;
 
         /** @var \Illuminate\Database\Eloquent\Collection<User> $adminUsers */
-        $adminUsers = User::where('type', 'hr')->orWhere('type', 'admin')->get();
+        $adminUsers = User::whereIn('type', ['admin', 'hr'])
+            ->where('status', 'active')
+            ->get();
 
         if ($adminUsers->isEmpty()) {
             $this->warn('No admin users found to notify.');

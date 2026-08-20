@@ -40,7 +40,7 @@ class CheckEmployeeSpecialDays extends Command
         $notifiedCount = 0;
 
         /** @var \Illuminate\Database\Eloquent\Collection<User> $allUsers */
-        $allUsers = User::all();
+        $allUsers = User::whereIn('status', ['active', 'onboarding'])->get();
 
         if ($allUsers->isEmpty()) {
             $this->warn('No users found to notify.');

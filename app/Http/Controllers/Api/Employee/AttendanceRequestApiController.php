@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api\Employee;
 
 use App\Http\Controllers\Api\ApiController;
+use App\Mail\RequestNotificationMail;
 use App\Models\AttendanceRequest;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Mail;
 use Carbon\Carbon;
 
 class AttendanceRequestApiController extends ApiController
@@ -91,6 +94,8 @@ class AttendanceRequestApiController extends ApiController
             'status' => 'pending'
         ]);
 
+        $this->notifyHrAdmins('Attendance Request', 'created', $attendanceRequest);
+
         return $this->success($attendanceRequest, 'Attendance request submitted successfully.', 201);
     }
 
@@ -123,6 +128,8 @@ class AttendanceRequestApiController extends ApiController
             'reason' => $request->reason,
         ]);
 
+        $this->notifyHrAdmins('Attendance Request', 'updated', $attendanceRequest);
+
         return $this->success($attendanceRequest, 'Attendance request updated successfully.');
     }
 
@@ -140,5 +147,24 @@ class AttendanceRequestApiController extends ApiController
     {
         $attendanceRequest->delete();
         return $this->success(null, 'Attendance request deleted successfully.');
+    }
+
+    /**
+     * Send an email notification to all HR and Admin users.
+     */
+    private function notifyHrAdmins(string $requestType, string $action, $requestModel): void
+    {
+        try {
+            $hrAdmins = User::whereIn('type', ['hr', 'admin'])
+                ->whereNotNull('email')
+                ->get();
+
+            foreach ($hrAdmins as $recipient) {
+                Mail::to($recipient->email)
+                    ->send(new RequestNotificationMail($requestType, $action, $requestModel));
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('RequestNotificationMail failed: ' . $e->getMessage());
+        }
     }
 }

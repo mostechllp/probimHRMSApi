@@ -246,8 +246,8 @@ class OffboardingApiController extends ApiController
         return $this->success(
             $offboarding,
             $request->boolean('is_draft')
-                ? 'Offboarding draft saved successfully.'
-                : 'Offboarding process initiated successfully.'
+            ? 'Offboarding draft saved successfully.'
+            : 'Offboarding process initiated successfully.'
         );
     }
 
@@ -1029,19 +1029,38 @@ class OffboardingApiController extends ApiController
         $lastWorkingDay = $offboarding->last_working_day ? Carbon::parse($offboarding->last_working_day) : null;
         $settlementYear = $lastWorkingDay ? $lastWorkingDay->format('Y') : now()->format('Y');
 
-        // ── Salary: basic + gross from the employee's active salary package(s) ──
+        // ── Salary: basic + gross from the employee's active salary package(s), converted to AED ──
         $activePackages = $salaryPackages->where('is_active', true);
         $packagesForSalary = $activePackages->isEmpty() ? $salaryPackages : $activePackages;
 
-        $grossSalary = $packagesForSalary->reduce(function ($carry, $package) {
-            return $carry + $package->salaryComponents->sum(fn($component) => (float) $component->value);
+        // Track per-package conversion details for the response
+        $conversionDetails = [];
+
+        $grossSalary = $packagesForSalary->reduce(function ($carry, $package) use (&$conversionDetails) {
+            $currency  = strtoupper(trim($package->currency ?? 'AED'));
+            $rate      = $this->toAedRate($currency);
+            $rawTotal  = $package->salaryComponents->sum(fn($c) => (float) $c->value);
+            $aedTotal  = round($rawTotal * $rate, 2);
+
+            $conversionDetails[$package->id] = [
+                'package_name'    => $package->name,
+                'original_currency' => $currency,
+                'exchange_rate_to_aed' => $rate,
+                'gross_in_original'   => round($rawTotal, 2),
+                'gross_in_aed'        => $aedTotal,
+            ];
+
+            return $carry + $aedTotal;
         }, 0.0);
 
         $basicSalary = $packagesForSalary->reduce(function ($carry, $package) {
+            $currency = strtoupper(trim($package->currency ?? 'AED'));
+            $rate     = $this->toAedRate($currency);
             $basicComponent = $package->salaryComponents->first(
                 fn($component) => stripos($component->component_name, 'basic') !== false
             );
-            return $carry + ($basicComponent ? (float) $basicComponent->value : 0.0);
+            $rawBasic = $basicComponent ? (float) $basicComponent->value : 0.0;
+            return $carry + round($rawBasic * $rate, 2);
         }, 0.0);
 
         // ── Service period ──
@@ -1148,9 +1167,11 @@ class OffboardingApiController extends ApiController
                     'last_working_day' => $offboarding->last_working_day,
                 ],
                 'salary' => [
-                    'basic_salary' => round($basicSalary, 2),
-                    'gross_salary' => round($grossSalary, 2),
+                    'basic_salary'   => round($basicSalary, 2),
+                    'gross_salary'   => round($grossSalary, 2),
                     'per_day_salary' => round($perDaySalary, 2),
+                    'currency'       => 'AED',
+                    'currency_conversion' => array_values($conversionDetails),
                 ],
                 'service_period' => $servicePeriod,
                 'attendance' => [
@@ -1802,7 +1823,7 @@ class OffboardingApiController extends ApiController
         if ($pendingSteps->isNotEmpty()) {
             return $this->error(
                 'All offboarding steps must be completed first: ' .
-                    $pendingSteps->implode(', ') . '.',
+                $pendingSteps->implode(', ') . '.',
                 422
             );
         }
@@ -1898,29 +1919,53 @@ class OffboardingApiController extends ApiController
 
             \DB::transaction(function () use ($offboarding) {
 
-                // Delete related records
-                $offboarding->checklists()->delete();
-                $offboarding->assets()->delete();
-                $offboarding->interview()->delete();
-                $offboarding->settlement()->delete();
-                $offboarding->letters()->delete();
+                try {
+                    $offboarding->checklists()->delete();
+                } catch (\Exception $e) {
+                    throw new \Exception('Checklists delete failed: ' . $e->getMessage());
+                }
 
-                // Delete employee's asset assignments
-                AssetAssignment::where('employee_id', $offboarding->employee_id)->delete();
+                try {
+                    $offboarding->assets()->delete();
+                } catch (\Exception $e) {
+                    throw new \Exception('Assets delete failed: ' . $e->getMessage());
+                }
 
-                $employee = Employee::where('employee_id', $offboarding->employee_id)
+                try {
+                    $offboarding->interview()->delete();
+                } catch (\Exception $e) {
+                    throw new \Exception('Interview delete failed: ' . $e->getMessage());
+                }
+
+                try {
+                    $offboarding->settlement()->delete();
+                } catch (\Exception $e) {
+                    throw new \Exception('Settlement delete failed: ' . $e->getMessage());
+                }
+
+                try {
+                    $offboarding->letters()->delete();
+                } catch (\Exception $e) {
+                    throw new \Exception('Letters delete failed: ' . $e->getMessage());
+                }
+
+                AssetAssignment::where(
+                    'employee_id',
+                    $offboarding->employee_id
+                )->delete();
+
+                $employee = Employee::where('id', $offboarding->employee_id)
                     ->whereHas('user', function ($query) {
                         $query->where('status', 'offboarding');
                     })
                     ->first();
 
-                if ($employee) {
+                if ($employee && $employee->user) {
                     $employee->user()->update([
                         'status' => 'active',
                     ]);
                 }
 
-                // Delete offboarding record
                 $offboarding->delete();
             });
 
@@ -1932,11 +1977,11 @@ class OffboardingApiController extends ApiController
 
             \Log::error(
                 "Failed to delete offboarding {$offboarding->id}: "
-                    . $e->getMessage()
+                . $e->getMessage()
             );
 
             return $this->error(
-                'Failed to delete offboarding record.',
+                'Failed to delete offboarding record: ' . $e->getMessage(),
                 500
             );
         }
@@ -2038,5 +2083,33 @@ class OffboardingApiController extends ApiController
 
         return $user->employee
             && $employee->reporting_manager_id === $user->employee->id;
+    }
+
+    /**
+     * Return the multiplier to convert a given currency into AED.
+     * Rates are approximate and should be updated periodically if live rates
+     * are not available.  AED and unknown currencies default to 1.0.
+     */
+    private function toAedRate(string $currency): float
+    {
+        return match (strtoupper(trim($currency))) {
+            'AED'  => 1.0,
+            'USD'  => 3.6725,   // 1 USD = 3.6725 AED (fixed peg)
+            'INR'  => 0.04375,  // approx 1 INR = 0.04375 AED
+            'EUR'  => 3.97,     // approx
+            'GBP'  => 4.63,     // approx
+            'SAR'  => 0.98,     // approx
+            'QAR'  => 1.01,     // approx
+            'KWD'  => 12.02,    // approx
+            'BHD'  => 9.75,     // approx
+            'OMR'  => 9.54,     // approx
+            'PKR'  => 0.013,    // approx
+            'NPR'  => 0.028,    // approx
+            'EGP'  => 0.075,    // approx
+            'PHP'  => 0.064,    // approx
+            'LKR'  => 0.011,    // approx
+            'BDT'  => 0.033,    // approx
+            default => 1.0,     // treat unknown currencies as AED
+        };
     }
 }
