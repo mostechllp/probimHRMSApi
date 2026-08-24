@@ -321,12 +321,21 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
 
     // Ticket Management (Admin side)
     Route::group(['prefix' => 'tickets'], function () {
-        Route::get('/', [AdminTicketApiController::class, 'index'])->middleware('permission:ticket-raise.read');
-        Route::get('/stats', [AdminTicketApiController::class, 'stats'])->middleware('permission:ticket-raise.read');
-        Route::get('/{id}', [AdminTicketApiController::class, 'show'])->middleware('permission:ticket-raise.read');
-        Route::put('/{id}', [AdminTicketApiController::class, 'update'])->middleware('permission:ticket-raise.edit');
-        Route::patch('/{id}/status', [AdminTicketApiController::class, 'updateStatus'])->middleware('permission:ticket-raise.edit');
-        Route::delete('/{id}', [AdminTicketApiController::class, 'destroy'])->middleware('permission:ticket-raise.delete');
+        Route::get('/', [AdminTicketApiController::class, 'index'])->middleware('permission:ticket-raise.read, developer-tickets.read');
+        Route::get('/stats', [AdminTicketApiController::class, 'stats'])->middleware('permission:ticket-raise.read, developer-tickets.read');
+        Route::get('/{id}', [AdminTicketApiController::class, 'show'])->middleware('permission:ticket-raise.read, developer-tickets.read');
+        Route::put('/{id}', [AdminTicketApiController::class, 'update'])->middleware('permission:ticket-raise.edit, developer-tickets.edit');
+        Route::patch('/{id}/status', [AdminTicketApiController::class, 'updateStatus'])->middleware('permission:ticket-raise.edit, developer-tickets.edit');
+        Route::delete('/{id}', [AdminTicketApiController::class, 'destroy'])->middleware('permission:ticket-raise.delete, developer-tickets.delete');
+    });
+
+    Route::group(['prefix' => 'developer-tickets'], function () {
+        Route::get('/', [AdminTicketApiController::class, 'index'])->middleware('permission:developer-tickets.read');
+        Route::get('/stats', [AdminTicketApiController::class, 'stats'])->middleware('permission:developer-tickets.read');
+        Route::get('/{id}', [AdminTicketApiController::class, 'show'])->middleware('permission:developer-tickets.read');
+        Route::put('/{id}', [AdminTicketApiController::class, 'update'])->middleware('permission:developer-tickets.edit');
+        Route::patch('/{id}/status', [AdminTicketApiController::class, 'updateStatus'])->middleware('permission:developer-tickets.edit');
+        Route::delete('/{id}', [AdminTicketApiController::class, 'destroy'])->middleware('permission:developer-tickets.delete');
     });
 });
 
@@ -335,6 +344,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::get('dashboard', [EmployeePortalApiController::class, 'dashboard']);
     Route::post('punch-in', [EmployeePortalApiController::class, 'punchIn']);
     Route::post('punch-out', [EmployeePortalApiController::class, 'punchOut']);
+    Route::post('missed-punch', [EmployeePortalApiController::class, 'missedPunch']);
     Route::post('break/start', [EmployeePortalApiController::class, 'startBreak']);
     Route::post('break/end', [EmployeePortalApiController::class, 'endBreak']);
 
@@ -373,7 +383,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::delete('attendance-requests/{attendanceRequest}', [EmployeeAttendanceRequestApiController::class, 'destroy']);
 
     Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show']);
-    
+
 
     //Assets
     Route::get('assets/{id}', [AssetApiController::class, 'employeeAssets']);

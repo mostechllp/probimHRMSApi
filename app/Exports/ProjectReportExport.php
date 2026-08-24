@@ -29,11 +29,16 @@ class ProjectReportExport implements FromArray, WithHeadings, WithStyles, Should
             'Project ID',
             'Project Name',
             'Project Status',
-            'Total Project Hours',
+            'Currency',
+            'Planned Total Hours',
+            'Planned Total Cost',
+            'Actual Total Project Hours',
+            'Actual Total Project Cost',
             'Total Employees',
             'Employee ID',
             'Employee Name',
-            'Total Employee Hours',
+            'Actual Total Employee Hours',
+            'Actual Total Employee Cost',
             'Date',
             'Hours Worked'
         ];

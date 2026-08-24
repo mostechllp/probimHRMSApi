@@ -751,13 +751,19 @@ class ReportApiController extends ApiController
             $tempDate->addDay();
         }
 
+        $startDateMonth = Carbon::parse($startDate)->month;
+        $startDateYear = Carbon::parse($startDate)->year;
+        $daysInMonth = Carbon::createFromDate($startDateYear, $startDateMonth, 1)->daysInMonth;
+        $workingHoursPerDay = 9;
+        $totalMonthlyHours = $daysInMonth * $workingHoursPerDay;
+
         foreach ($projects as $project) {
             // Get all time logs for this project in date range
             $logs = ProjectTimeLog::where('project_id', $project->id)
                 ->whereBetween('date', [$startDate, $endDate])
                 ->with([
                     'user.employee' => function ($query) {
-                        $query->withTrashed();
+                        $query->withTrashed()->with('salaryPackages.salaryComponents');
                     }
                 ])
                 ->get();
@@ -767,6 +773,7 @@ class ReportApiController extends ApiController
 
             $employeesList = [];
             $totalProjectMinutes = 0;
+            $totalActualCost = 0;
 
             foreach ($logsByUser as $userId => $userLogs) {
                 $user = $userLogs->first()->user;
@@ -784,6 +791,22 @@ class ReportApiController extends ApiController
 
                 $totalProjectMinutes += $employeeTotalMinutes;
 
+                $employeeCost = 0;
+                if ($employee && $employee->salaryPackages) {
+                    $activePackages = $employee->salaryPackages->where('is_active', true);
+                    $totalGrossAed = 0;
+                    foreach ($activePackages as $package) {
+                        $pkgGross = $package->salaryComponents->sum('value');
+                        $pkgCurrency = $package->currency ?: 'AED';
+                        $totalGrossAed += $this->convertCurrency((float) $pkgGross, $pkgCurrency, 'AED');
+                    }
+                    $hourlyRateAed = $totalGrossAed > 0 && $totalMonthlyHours > 0
+                        ? ($totalGrossAed / $totalMonthlyHours)
+                        : 0;
+                    $employeeCost = ($employeeTotalMinutes / 60) * $hourlyRateAed;
+                }
+                $totalActualCost += $employeeCost;
+
                 $employeesList[] = [
                     'id' => $employee?->id,
                     'user_id' => $userId,
@@ -791,6 +814,7 @@ class ReportApiController extends ApiController
                     'name' => $employee ? trim($employee->first_name . ' ' . $employee->last_name) : ($user ? trim($user->first_name . ' ' . $user->last_name) : 'Unknown'),
                     'daily_breakdown' => $dailyBreakdown,
                     'total_employee_hours' => round($employeeTotalMinutes / 60, 2),
+                    'actual_cost' => round($employeeCost, 2),
                 ];
             }
 
@@ -799,6 +823,11 @@ class ReportApiController extends ApiController
                 'name' => $project->name,
                 'status' => $project->status ?? 'active',
                 'total_hours' => round($totalProjectMinutes / 60, 2),
+                'planned_total_hours' => $project->total_hours,
+                'planned_total_cost' => $project->total_cost,
+                'actual_time_logged_hours' => round($totalProjectMinutes / 60, 2),
+                'actual_cost' => round($totalActualCost, 2),
+                'currency' => $project->currency ?: 'AED',
                 'employee_count' => count($employeesList),
                 'employees' => $employeesList,
             ];
@@ -837,6 +866,12 @@ class ReportApiController extends ApiController
             $tempDate->addDay();
         }
 
+        $startDateMonth = Carbon::parse($startDate)->month;
+        $startDateYear = Carbon::parse($startDate)->year;
+        $daysInMonth = Carbon::createFromDate($startDateYear, $startDateMonth, 1)->daysInMonth;
+        $workingHoursPerDay = 9;
+        $totalMonthlyHours = $daysInMonth * $workingHoursPerDay;
+
         $data = [];
 
         foreach ($projects as $project) {
@@ -845,7 +880,7 @@ class ReportApiController extends ApiController
                 ->whereBetween('date', [$startDate, $endDate])
                 ->with([
                     'user.employee' => function ($query) {
-                        $query->withTrashed();
+                        $query->withTrashed()->with('salaryPackages.salaryComponents');
                     }
                 ])
                 ->get();
@@ -853,8 +888,12 @@ class ReportApiController extends ApiController
             $logsByUser = $logs->groupBy('user_id');
 
             $totalProjectMinutes = 0;
+            $totalActualCost = 0;
             $projectRows = [];
             $uniqueEmployeesCount = count($logsByUser);
+            $projectCurrency = $project->currency ?: 'AED';
+            $plannedTotalHours = $project->total_hours;
+            $plannedTotalCost = $project->total_cost;
 
             foreach ($logsByUser as $userId => $userLogs) {
                 $user = $userLogs->first()->user;
@@ -881,11 +920,29 @@ class ReportApiController extends ApiController
 
                 $totalProjectMinutes += $employeeTotalMinutes;
 
+                $employeeCost = 0;
+                if ($employee && $employee->salaryPackages) {
+                    $activePackages = $employee->salaryPackages->where('is_active', true);
+                    $totalGrossAed = 0;
+                    foreach ($activePackages as $package) {
+                        $pkgGross = $package->salaryComponents->sum('value');
+                        $pkgCurrency = $package->currency ?: 'AED';
+                        $totalGrossAed += $this->convertCurrency((float) $pkgGross, $pkgCurrency, 'AED');
+                    }
+                    $hourlyRateAed = $totalGrossAed > 0 && $totalMonthlyHours > 0
+                        ? ($totalGrossAed / $totalMonthlyHours)
+                        : 0;
+                    $employeeCost = ($employeeTotalMinutes / 60) * $hourlyRateAed;
+                }
+
+                $totalActualCost += $employeeCost;
+
                 foreach ($employeeRows as $row) {
                     $projectRows[] = [
                         'emp_id' => $row['emp_id'],
                         'emp_name' => $row['emp_name'],
                         'emp_total_hours' => round($employeeTotalMinutes / 60, 2),
+                        'emp_total_cost' => round($employeeCost, 2),
                         'date' => $row['date'],
                         'hours' => $row['hours']
                     ];
@@ -899,11 +956,16 @@ class ReportApiController extends ApiController
                     $project->id,
                     $project->name,
                     ucfirst($project->status ?? 'active'),
+                    $projectCurrency,
+                    $plannedTotalHours,
+                    $plannedTotalCost,
                     $totalProjectHours,
+                    round($totalActualCost, 2),
                     $uniqueEmployeesCount,
                     $row['emp_id'],
                     $row['emp_name'],
                     $row['emp_total_hours'],
+                    $row['emp_total_cost'],
                     $row['date'],
                     $row['hours']
                 ];
@@ -915,10 +977,15 @@ class ReportApiController extends ApiController
                     $project->id,
                     $project->name,
                     ucfirst($project->status ?? 'active'),
+                    $projectCurrency,
+                    $plannedTotalHours,
+                    $plannedTotalCost,
+                    0,
                     0,
                     0,
                     'N/A',
                     'N/A',
+                    0,
                     0,
                     '-',
                     0
@@ -1691,7 +1758,7 @@ class ReportApiController extends ApiController
             $totalActualMinutes = 0;
             $totalActualCost = 0;
             $employeeBreakdown = [];
-            $projectCurrency = $project->currency ?: self::DEFAULT_CURRENCY;
+            $projectCurrency = 'AED';
 
             // Group logs by user so each employee appears once
             $logsByUser = $project->timeLogs->groupBy('user_id');
@@ -1705,63 +1772,28 @@ class ReportApiController extends ApiController
 
                 $activePackages = $employee->salaryPackages->where('is_active', true);
 
-                // Fallback package when a day's location can't be determined
-                // (no attendance record, no timezone, or unrecognised
-                // timezone) — same AED-preferred behaviour as before.
-                $fallbackPackage = $activePackages
-                    ->sortByDesc(fn($p) => strtoupper($p->currency ?? '') === 'AED' ? 1 : 0)
-                    ->first();
-
-                $userMinutes = 0;
-                $userCost = 0;
-                $currencyBreakdown = [];
-
-                // Split this employee's logs by day so each day can be
-                // costed against the package that matches where they were
-                // actually working (per that day's attendance timezone).
-                $logsByDate = $logs->groupBy(fn($log) => Carbon::parse($log->date)->toDateString());
-
-                foreach ($logsByDate as $dateStr => $dayLogs) {
-                    $dayMinutes = $dayLogs->sum('time_taken_minutes');
-                    $userMinutes += $dayMinutes;
-
-                    $attendance = $attendanceByUserDate->get($userId . '|' . $dateStr);
-                    $region = $attendance ? $this->classifyTimezoneRegion($attendance->timezone) : null;
-
-                    $dayPackage = $region
-                        ? $activePackages->first(fn($p) => strtoupper($p->currency ?? '') === $region)
-                        : null;
-                    $dayPackage = $dayPackage ?? $fallbackPackage;
-
-                    $dayGrossSalary = $dayPackage
-                        ? $dayPackage->salaryComponents->sum('value')
-                        : 0;
-                    $dayCurrency = $dayPackage?->currency ?: $projectCurrency;
-
-                    $dayGrossConverted = $this->convertCurrency(
-                        (float) $dayGrossSalary,
-                        $dayCurrency,
-                        $projectCurrency
-                    );
-
-                    $dayHourlyRate = $dayGrossConverted > 0 && $totalMonthlyHours > 0
-                        ? ($dayGrossConverted / $totalMonthlyHours)
-                        : 0;
-
-                    $dayHours = round($dayMinutes / 60, 2);
-                    $dayCost = round($dayHours * $dayHourlyRate, 2);
-                    $userCost += $dayCost;
-
-                    if (!isset($currencyBreakdown[$dayCurrency])) {
-                        $currencyBreakdown[$dayCurrency] = [
-                            'currency' => $dayCurrency,
-                            'hours' => 0,
-                            'cost' => 0,
-                        ];
-                    }
-                    $currencyBreakdown[$dayCurrency]['hours'] += $dayHours;
-                    $currencyBreakdown[$dayCurrency]['cost'] += $dayCost;
+                $totalGrossAed = 0;
+                foreach ($activePackages as $package) {
+                    $pkgGross = $package->salaryComponents->sum('value');
+                    $pkgCurrency = $package->currency ?: 'AED';
+                    $totalGrossAed += $this->convertCurrency((float) $pkgGross, $pkgCurrency, 'AED');
                 }
+
+                $hourlyRateAed = $totalGrossAed > 0 && $totalMonthlyHours > 0
+                    ? ($totalGrossAed / $totalMonthlyHours)
+                    : 0;
+
+                $userMinutes = $logs->sum('time_taken_minutes');
+                $userHours = round($userMinutes / 60, 2);
+                $userCost = round($userHours * $hourlyRateAed, 2);
+
+                $currencyBreakdown = [
+                    'AED' => [
+                        'currency' => 'AED',
+                        'hours' => $userHours,
+                        'cost' => $userCost,
+                    ]
+                ];
 
                 $userCost = round($userCost, 2);
                 $totalActualMinutes += $userMinutes;

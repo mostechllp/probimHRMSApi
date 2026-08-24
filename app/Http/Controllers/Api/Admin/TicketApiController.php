@@ -118,6 +118,7 @@ class TicketApiController extends ApiController
     {
         $request->validate([
             'status' => 'required|in:open,inprogress,closed,reopen',
+            'notes' => 'nullable'
         ]);
 
         $ticket = Ticket::find($id);
@@ -126,7 +127,7 @@ class TicketApiController extends ApiController
             return $this->error('Ticket not found.', 404);
         }
 
-        $ticket->update(['status' => $request->status]);
+        $ticket->update(['status' => $request->status,'notes' => $request->notes]);
 
         return $this->success($ticket->fresh(['user', 'module']), 'Ticket status updated successfully.');
     }

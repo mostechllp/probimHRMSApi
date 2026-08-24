@@ -19,6 +19,7 @@ class Ticket extends Model
         'screenshot',
         'priority',
         'status',
+        'notes'
     ];
 
     public function user()

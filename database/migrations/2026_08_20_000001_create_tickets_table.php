@@ -16,6 +16,7 @@ return new class extends Migration {
             $table->string('title');
             $table->text('description');
             $table->string('screenshot')->nullable();
+            $table->string('notes')->nullable();
             $table->enum('priority', ['low', 'medium', 'high', 'urgent'])->default('medium');
             $table->enum('status', ['open', 'inprogress', 'closed', 'reopen'])->default('open');
             $table->timestamps();

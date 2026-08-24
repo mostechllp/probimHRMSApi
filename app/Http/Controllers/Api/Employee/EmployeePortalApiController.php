@@ -247,6 +247,18 @@ class EmployeePortalApiController extends ApiController
         $rangeStart = ($joiningDate && $joiningDate->gt($from)) ? $joiningDate->copy() : $from->copy();
         $rangeEnd = Carbon::yesterday()->lt($to) ? Carbon::yesterday() : $to->copy();
 
+        $approvedMissedPunchDates = AttendanceRequest::where('employee_id', $leave_employee_id->id)
+            ->where('type', 'missed_punch_in')
+            ->where('status', '!=' ,'approved')
+            ->whereBetween('request_date', [
+                $from->toDateString(),
+                $to->toDateString()
+            ])
+            ->pluck('request_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->unique()
+            ->toArray();
+
         $missedPunchIns = [];
         $cursor = $rangeStart->copy();
         while ($cursor->lte($rangeEnd)) {
@@ -259,7 +271,7 @@ class EmployeePortalApiController extends ApiController
             $isOnLeave = in_array($dateStr, $leaveDates);
             $hasPunched = $loggedDates->contains($dateStr);
 
-            if ($isWorkingDay && !$isSunday && !$isHoliday && !$isOnLeave && !$hasPunched) {
+            if ($isWorkingDay && !$isSunday && !$isHoliday && !$isOnLeave && !$hasPunched && !in_array($dateStr, $approvedMissedPunchDates)) {
                 $missedPunchIns[] = [
                     'date' => $dateStr,
                     'day' => $dayName,
@@ -533,7 +545,11 @@ class EmployeePortalApiController extends ApiController
             // Case 2: full ISO datetime like "2026-06-17T18:00:00+05:30"
             else {
                 try {
-                    $now = Carbon::parse($punchOutInput);
+                    $parsedPunchOut = Carbon::parse($punchOutInput);
+                    $now = Carbon::parse(
+                        $parsedPunchOut->format('Y-m-d H:i:s'),
+                        $timezone
+                    );
                 } catch (\Exception $e) {
                     return $this->error('Invalid punch_out_time format.', 422);
                 }
@@ -562,7 +578,15 @@ class EmployeePortalApiController extends ApiController
         }
 
         if ($totalProjectTime > $workingHours) {
-            return $this->error('The total project time cannot exceed the total working hours.', 422);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'The total project time cannot exceed the total working hours.',
+                'total_project_time' => $totalProjectTime,
+                'total_working_hours' => $workingHours,
+                'punchin' => $punchIn->toIso8601String(),
+                'punchout' => $now->toIso8601String(),
+                'timezone' => $timezone,
+            ], 422);
         }
 
         $log->update([
@@ -575,6 +599,58 @@ class EmployeePortalApiController extends ApiController
         ]);
 
         return $this->success($log, 'Punched out successfully.');
+    }
+
+    /**
+     * Missed Punch (Immediate Marking)
+     */
+    public function missedPunch(Request $request): JsonResponse
+    {
+        $request->validate([
+            'type' => 'required|string|in:early_check_in,late_check_in,missed_punch_in,missed_punch_out',
+            'request_date' => 'required|date',
+            'reason' => 'required|string|max:1000',
+            'timezone' => 'nullable|string',
+            'project_times' => 'nullable|array',
+            'project_times.*.project_id' => 'required|exists:projects,id',
+            'project_times.*.time_minutes' => 'required|integer|min:0',
+            'punch_out_time' => 'required|string',
+            'punch_in_time' => 'required|string'
+        ]);
+
+        $user = auth('api')->user();
+        $employee = $user ? $user->employee : null;
+        if (!$employee) {
+            return $this->error('Employee profile not found', 404);
+        }
+
+        $timezone = $request->input('timezone', config('app.timezone'));
+        $date = $request->request_date;
+
+        $existingRequest = AttendanceRequest::where('employee_id', $employee->id)
+            ->where('request_date', $date)
+            ->where('type', 'missed_punch_in')
+            ->first();
+
+        if ($existingRequest) {
+            return $this->error('You have already submitted a missed punch request for this date.', 400);
+        }
+
+        $attendanceRequest = AttendanceRequest::create([
+            'employee_id' => $employee->id,
+            'type' => 'missed_punch_in',
+            'request_date' => $date,
+            'request_time' => Carbon::now($timezone)->format('H:i:s'),
+            'reason' => $request->reason,
+            'status' => 'pending',
+            'timezone' => $timezone,
+            'created_by' => 'employee',
+            'project_times' => $request->project_times,
+            'punch_in_time' => $request->punch_in_time,
+            'punch_out_time' => $request->punch_out_time
+        ]);
+
+        return $this->success($attendanceRequest, 'Missed punch request submitted successfully.', 201);
     }
 
     /**

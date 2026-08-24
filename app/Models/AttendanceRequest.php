@@ -14,7 +14,14 @@ class AttendanceRequest extends Model
         'reason',
         'status',
         'timezone',
-        'created_by'
+        'created_by',
+        'project_times',
+        'punch_in_time',
+        'punch_out_time'
+    ];
+
+    protected $casts = [
+        'project_times' => 'array',
     ];
 
     public function employee()
