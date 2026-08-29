@@ -101,7 +101,7 @@ class AttendanceRequestApiController extends ApiController
             );
         }
 
-        $type     = $attendanceRequest->type;
+        $type = $attendanceRequest->type;
         $employee = $attendanceRequest->employee;
 
         // Types that only need a status change — nothing else to do
@@ -132,7 +132,7 @@ class AttendanceRequestApiController extends ApiController
         if ($type === 'late_check_in' || $type === 'missed_punch_in') {
 
             $log = AttendanceLog::firstOrNew([
-                'userid'   => $employee->user_id,
+                'userid' => $employee->user_id,
                 'log_date' => $attendanceRequest->request_date,
             ]);
 
@@ -156,6 +156,16 @@ class AttendanceRequestApiController extends ApiController
 
             $log->punch_in = $punchInDateTime;
 
+            // Save punch-in location for admin-created requests
+            if ($attendanceRequest->created_by === 'admin') {
+                $location = $attendanceRequest->location ?? [];
+                $log->punch_in_latitude  = $location['latitude']  ?? null;
+                $log->punch_in_longitude = $location['longitude'] ?? null;
+                $log->punch_in_address   = $location['address']   ?? null;
+                $log->timezone   = $attendanceRequest->timezone   ?? null;
+                $log->work_location   = $attendanceRequest->work_location   ?? null;
+            }
+
             // Optionally set punch-out if provided
             if ($attendanceRequest->punch_out_time) {
                 $punchOutDateTime = Carbon::parse(
@@ -165,7 +175,7 @@ class AttendanceRequestApiController extends ApiController
                 $log->punch_out = $punchOutDateTime;
             }
 
-            $log->status   = 1;
+            $log->status = 1;
             $log->timezone = $timezone;
 
             if ($log->punch_out) {
@@ -208,9 +218,9 @@ class AttendanceRequestApiController extends ApiController
 
                 ProjectTimeLog::updateOrCreate(
                     [
-                        'user_id'    => $employee->user_id,
+                        'user_id' => $employee->user_id,
                         'project_id' => $projectTime['project_id'],
-                        'date'       => $attendanceRequest->request_date,
+                        'date' => $attendanceRequest->request_date,
                     ],
                     [
                         'time_taken_minutes' => $projectTime['time_minutes'],
@@ -238,9 +248,17 @@ class AttendanceRequestApiController extends ApiController
                     $timezone
                 );
 
-                $log->punch_out  = $punchOutDateTime;
+                $log->punch_out = $punchOutDateTime;
                 $log->log_status = 'OUT';
-                $log->timezone   = $timezone;
+                $log->timezone = $timezone;
+
+                // Save punch-out location for admin-created requests
+                if ($attendanceRequest->created_by === 'admin') {
+                    $location = $attendanceRequest->location ?? [];
+                    $log->punch_out_latitude  = $location['latitude']  ?? null;
+                    $log->punch_out_longitude = $location['longitude'] ?? null;
+                    $log->punch_out_address   = $location['address']   ?? null;
+                }
 
                 // Recalculate working hours
                 if ($log->punch_in) {

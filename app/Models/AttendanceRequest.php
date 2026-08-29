@@ -17,11 +17,14 @@ class AttendanceRequest extends Model
         'created_by',
         'project_times',
         'punch_in_time',
-        'punch_out_time'
+        'punch_out_time',
+        'location',
+        'work_location'
     ];
 
     protected $casts = [
         'project_times' => 'array',
+        'location' => 'array',
     ];
 
     public function employee()

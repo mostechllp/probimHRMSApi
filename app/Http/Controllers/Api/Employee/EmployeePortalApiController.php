@@ -249,7 +249,7 @@ class EmployeePortalApiController extends ApiController
 
         $approvedMissedPunchDates = AttendanceRequest::where('employee_id', $leave_employee_id->id)
             ->where('type', 'missed_punch_in')
-            ->where('status', '!=' ,'approved')
+            ->where('status', '!=', 'approved')
             ->whereBetween('request_date', [
                 $from->toDateString(),
                 $to->toDateString()
@@ -294,8 +294,9 @@ class EmployeePortalApiController extends ApiController
                 'punch_in_location' => [          // ← ADD THIS
                     'latitude' => $attendance ? $attendance->punch_in_latitude : null,
                     'longitude' => $attendance ? $attendance->punch_in_longitude : null,
-                    'address' => $attendance ? $attendance->punch_in_address : null
+                    'address' => $attendance ? $attendance->punch_in_address : null,
                 ],
+                'punch_in_timezone' => $attendance ? $attendance->timezone : null,
                 'punch_out_location' => [          // ← ADD THIS
                     'latitude' => $attendance ? $attendance->punch_out_latitude : null,
                     'longitude' => $attendance ? $attendance->punch_out_longitude : null,
@@ -432,17 +433,17 @@ class EmployeePortalApiController extends ApiController
 
                     if (!$pendingRequest) {
                         // No request at all — auto-create one now
-                        $newAttendanceRequest = AttendanceRequest::create([
-                            'employee_id' => $employee->id,
-                            'type' => 'late_check_in',
-                            'request_date' => $today,
-                            'request_time' => $now->format('H:i:s'),
-                            'reason' => "Employee attempted to punch in {$lateDuration} late (scheduled: {$scheduledStartTime}).",
-                            'status' => 'pending',
-                            'timezone' => $timezone,
-                            'created_by' => 'admin'
-                        ]);
-                        $this->notifyHrAdmins('Attendance Request', 'created', $newAttendanceRequest);
+                        // $newAttendanceRequest = AttendanceRequest::create([
+                        //     'employee_id' => $employee->id,
+                        //     'type' => 'late_check_in',
+                        //     'request_date' => $today,
+                        //     'request_time' => $now->format('H:i:s'),
+                        //     'reason' => "Employee attempted to punch in {$lateDuration} late (scheduled: {$scheduledStartTime}).",
+                        //     'status' => 'pending',
+                        //     'timezone' => $timezone,
+                        //     'created_by' => 'admin'
+                        // ]);
+                        $this->notifyHrAdmins('Attendance Request', 'created', '');
 
                         return $this->error(
                             "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
@@ -569,8 +570,12 @@ class EmployeePortalApiController extends ApiController
         }
 
         // Calculate working hours
-        $totalMinutes = $punchIn->diffInMinutes($now);
+        // $totalMinutes = $punchIn->diffInMinutes($now);
+        // $workingHours = max(0, $totalMinutes);
+
+        $totalMinutes = floor($punchIn->diffInSeconds($now) / 60);
         $workingHours = max(0, $totalMinutes);
+
 
         // Safety guard against anomalous durations (e.g. stale punch-in from days ago)
         if ($workingHours > 1440) { // more than 24 hours
@@ -599,6 +604,63 @@ class EmployeePortalApiController extends ApiController
         ]);
 
         return $this->success($log, 'Punched out successfully.');
+    }
+
+    public function sendLatePunchRequest(Request $request): JsonResponse
+    {
+        $request->validate([
+            'employee_id' => 'required|exists:employees,id',
+            'type' => 'required|string|in:early_check_in,late_check_in,missed_punch_in,missed_punch_out',
+            'request_date' => 'required|date',
+            'request_time' => 'nullable|date_format:H:i:s',
+            'reason' => 'required|string|max:1000',
+            'status' => 'nullable|in:pending,approved,rejected',
+            'timezone' => 'nullable|string',
+            'location' => 'nullable',
+            'work_location' => 'nullable',
+            'created_by' => 'nullable|string|in:employee,admin',
+        ]);
+
+        $user = auth('api')->user();
+        $employee = $user ? $user->employee : null;
+
+        if (!$employee) {
+            return $this->error('Employee profile not found', 404);
+        }
+
+        $timezone = $request->input('timezone', config('app.timezone'));
+        $date = $request->request_date;
+
+        $existingRequest = AttendanceRequest::where('employee_id', $employee->id)
+            ->where('request_date', $date)
+            ->where('type', 'late_check_in')
+            ->first();
+
+        if ($existingRequest) {
+            return $this->error(
+                'You have already submitted a missed punch request for this date.',
+                400
+            );
+        }
+
+        $attendanceRequest = AttendanceRequest::create([
+            'employee_id' => $employee->id,
+            'type' => 'late_check_in',
+            'request_date' => $request->request_date,
+            'request_time' => $request->request_time,
+            'reason' => $request->reason,
+            'status' => 'pending',
+            'timezone' => $timezone,
+            'created_by' => 'admin',
+            'location' => $request->location,
+            'work_location' => $request->work_location
+        ]);
+
+        return $this->success(
+            $attendanceRequest,
+            'Late check-in block request has been submitted successfully.',
+            201
+        );
     }
 
     /**

@@ -140,14 +140,48 @@ class DashboardApiController extends ApiController
             ->whereDate('log_date', $today)
             ->whereNotNull('punch_in')
             ->orderBy('punch_in', 'desc')
-            ->take(7)
             ->get();
 
+        // $recentPunches = $recentPunchLogs->map(function ($log) {
+        //     $time = Carbon::parse($log->punch_in)->format('H:i:s');
+        //     $status = $time < '08:11:00' ? 'on_time' : 'late';
+
+        //     $name = 'Unknown';
+        //     if ($log->user && $log->user->employee) {
+        //         $emp = $log->user->employee;
+        //         $name = trim($emp->first_name . ' ' . $emp->last_name);
+        //     } elseif ($log->user) {
+        //         $name = $log->user->username ?? 'Unknown';
+        //     }
+
+        //     return [
+        //         "name" => $name,
+        //         "time" => Carbon::parse($log->punch_in)->format('H:i'),
+        //         "status" => $status
+        //     ];
+        // })->toArray();
+
         $recentPunches = $recentPunchLogs->map(function ($log) {
-            $time = Carbon::parse($log->punch_in)->format('H:i:s');
-            $status = $time < '08:11:00' ? 'on_time' : 'late';
+
+            $timezone = $log->timezone ?? null;
+
+            $punchIn = Carbon::parse($log->punch_in);
+            $time = $punchIn->format('H:i:s');
+
+            // Set late threshold based on timezone
+            if ($timezone === 'Asia/Kolkata') {
+                $lateAfter = '10:30:00';
+            } elseif ($timezone === 'Asia/Dubai') {
+                $lateAfter = '09:00:00';
+            } else {
+                // Default threshold
+                $lateAfter = '09:00:00';
+            }
+
+            $status = $time > $lateAfter ? 'late' : 'on_time';
 
             $name = 'Unknown';
+
             if ($log->user && $log->user->employee) {
                 $emp = $log->user->employee;
                 $name = trim($emp->first_name . ' ' . $emp->last_name);
@@ -157,7 +191,7 @@ class DashboardApiController extends ApiController
 
             return [
                 "name" => $name,
-                "time" => Carbon::parse($log->punch_in)->format('H:i'),
+                "time" => $punchIn->format('H:i A'),
                 "status" => $status
             ];
         })->toArray();

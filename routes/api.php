@@ -345,6 +345,7 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::post('punch-in', [EmployeePortalApiController::class, 'punchIn']);
     Route::post('punch-out', [EmployeePortalApiController::class, 'punchOut']);
     Route::post('missed-punch', [EmployeePortalApiController::class, 'missedPunch']);
+    Route::post('late-check-in-block', [EmployeePortalApiController::class, 'sendLatePunchRequest']);
     Route::post('break/start', [EmployeePortalApiController::class, 'startBreak']);
     Route::post('break/end', [EmployeePortalApiController::class, 'endBreak']);
 

@@ -43,6 +43,8 @@ return new class extends Migration
             $table->text('reason');
             $table->string('status')->default('pending');
             $table->string('timezone')->nullable();
+            $table->json('location')->nullable();
+            $table->text('work_location')->nullable();
             $table->string('created_by')->nullable();
             $table->timestamps();
         });
