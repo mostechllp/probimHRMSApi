@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class EmployeeSalaryPackage extends Model
 {
     protected $fillable = [
+        'employee_id',
         'name',
         'currency',
         'is_active'

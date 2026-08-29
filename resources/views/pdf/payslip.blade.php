@@ -1,253 +1,1312 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+
 <head>
-    <meta charset="utf-8">
-    <title>Payslip</title>
-    <style>
-        body { font-family: sans-serif; font-size: 12px; color: #1f2937; margin: 0; padding: 0; }
-        
-        table { page-break-inside: auto; }
-        tr    { page-break-inside: avoid; page-break-after: auto; }
-        thead { display: table-header-group; }
-        tfoot { display: table-footer-group; }
-
-        .brand-bar { width: 100%; background-color: #1e293b; padding: 18px 24px; margin-bottom: 18px; }
-        .brand-bar td { color: #ffffff; vertical-align: middle; }
-        .brand-bar .company-name { font-size: 20px; font-weight: bold; }
-        .brand-bar .company-sub { font-size: 10px; color: #cbd5e1; margin-top: 2px; }
-        .brand-bar .payslip-tag { font-size: 16px; font-weight: bold; text-align: right; letter-spacing: 1px; }
-        .brand-bar .payslip-ref { font-size: 10px; color: #cbd5e1; text-align: right; margin-top: 2px; }
-
-        .stats-strip { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
-        .stats-strip td { width: 25%; background-color: #f1f5f9; border: 1px solid #e2e8f0; padding: 12px 14px; text-align: center; }
-        .stats-strip .stat-label { font-size: 9px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
-        .stats-strip .stat-value { font-size: 14px; font-weight: bold; color: #1e293b; margin-top: 4px; }
-        .stats-strip .stat-value.highlight { color: #15803d; }
-
-        .details-grid { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
-        .details-grid td { width: 50%; vertical-align: top; padding: 0 6px; }
-        .details-grid td:first-child { padding-left: 0; }
-        .details-grid td:last-child { padding-right: 0; }
-
-        .detail-card { border: 1px solid #e2e8f0; border-radius: 4px; padding: 12px 14px; }
-        .detail-card h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #1e293b; border-bottom: 2px solid #1e293b; padding-bottom: 5px; }
-        .detail-row { padding: 3px 0; }
-        .detail-row .label { color: #64748b; display: inline-block; width: 100px; }
-        .detail-row .value { font-weight: bold; color: #1f2937; }
-
-        .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold; padding: 6px 0; margin-bottom: 4px; border-bottom: 2px solid; }
-        .section-title.earnings { color: #2e573e; border-color: #7f9487; }
-        .section-title.deductions { color: #505c66; border-color: #888591; }
-
-        .line-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-        .line-table td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; }
-        .line-table td.amt { text-align: right; }
-        .line-table tr.subtotal td { border-top: 2px solid #1e293b; border-bottom: none; font-weight: bold; padding-top: 8px; }
-
-        .net-bar { width: 100%; background-color: #5f757c; padding: 14px 24px; margin-top: 6px; }
-        .net-bar td { color: #ffffff; }
-        .net-bar .net-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .net-bar .net-value { font-size: 20px; font-weight: bold; text-align: right; }
-
-        .footer-note { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 20px; }
-    </style>
-</head>
-<body>
+    <meta charset="UTF-8">
 
     @php
-        $data      = $payroll->data ?? [];
-        $employee  = $payroll->employee;
-        $currency  = $payroll->currency ?? 'AED';
+        $data = $payroll->data ?? [];
+        $employee = $payroll->employee;
+        $currency = $payroll->currency ?? 'AED';
 
-        $monthName = \Carbon\Carbon::createFromFormat('m', $payroll->pay_period_month)->format('F');
-        $yearFull  = $payroll->pay_period_year;
-        
-        $paymentDate = $payroll->updated_at ? $payroll->updated_at->format('Y-m-d') : date('Y-m-d');
-        $paymentId   = 'PS' . $payroll->pay_period_year . sprintf('%02d', $payroll->pay_period_month) . $payroll->id;
+        $monthName = \Carbon\Carbon::createFromFormat(
+            'm',
+            $payroll->pay_period_month
+        )->format('F');
 
-        $empName     = trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? ''));
-        $eid         = $employee->employee_id ?? $employee->user_id ?? 'N/A';
+        $yearFull = $payroll->pay_period_year;
+
+        $paymentDate = $payroll->updated_at
+            ? $payroll->updated_at->format('d M Y')
+            : date('Y-m-d');
+
+        $paymentId =
+            'PS' .
+            $payroll->pay_period_year .
+            sprintf('%02d', $payroll->pay_period_month) .
+            $payroll->id;
+
+        $empName = trim(
+            ($employee->first_name ?? '') . ' ' .
+            ($employee->last_name ?? '')
+        );
+
+        $eid = $employee->employee_id
+            ?? $employee->user_id
+            ?? 'N/A';
+
         $designation = $employee->user->designation->name ?? 'N/A';
-        $doj         = $employee->joining_date ?? 'N/A';
+
+        $doj = $employee->joining_date ?? 'N/A';
 
         $bankDetails = $employee->bankDetails->first() ?? null;
-        $accountNo   = $bankDetails->account_number ?? 'N/A';
-        $bankName    = $bankDetails->bank_name ?? 'N/A';
-        $ifsc        = $bankDetails->ifsc_code ?? $bankDetails->swift_code ?? 'N/A';
-        $branch      = $bankDetails->branch_name ?? 'N/A';
-        $upiId       = $bankDetails->upi_id ?? 'N/A';
-        $upiNo       = $bankDetails->upi_number ?? 'N/A';
 
-        $workedDays  = $data['step_2']['total_worked_days'] ?? $data['step_1']['total_worked_days'] ?? $data['step_5']['total_worked_days'] ?? 0;
-        $daysInMonth = 30;
+        $accountNo = $bankDetails->account_number ?? 'N/A';
+        $bankName = $bankDetails->bank_name ?? 'N/A';
 
-        // --- Earnings (Table wise per package) ---
+        $ifsc = $bankDetails->ifsc_code
+            ?? $bankDetails->swift_code
+            ?? 'N/A';
+
+        $branch = $bankDetails->branch_name ?? 'N/A';
+
+        /*
+        |--------------------------------------------------------------------------
+        | Days In Month
+        |--------------------------------------------------------------------------
+        */
+
+        $daysInMonth = \Carbon\Carbon::create(
+            $payroll->pay_period_year,
+            $payroll->pay_period_month,
+            1
+        )->daysInMonth;
+
+        /*
+        |--------------------------------------------------------------------------
+        | Earnings
+        |--------------------------------------------------------------------------
+        */
+
+        $locationBreakdown =
+            $data['step_2']['location_breakdown']
+            ?? $data['step_1']['location_breakdown']
+            ?? [];
+
         $packagesEarnings = [];
-        $locationBreakdown = $data['step_2']['location_breakdown'] ?? $data['step_1']['location_breakdown'] ?? [];
-        
+
         foreach ($locationBreakdown as $loc) {
-            $pkgName = $loc['package']['name'] ?? $loc['location_name'] ?? 'Unknown';
-            $pkgCurrency = $loc['currency']['code'] ?? 'AED';
-            
+
+            $pkgName =
+                $loc['package']['name']
+                ?? $loc['location_name']
+                ?? 'Unknown';
+
+            $pkgCurrency =
+                $loc['currency']['code']
+                ?? $currency;
+
             $pkgComponents = [];
+
             foreach ($loc['salary_components'] ?? [] as $comp) {
-                $pkgComponents[$comp['name'] ?? 'Unknown'] = $comp['amount'] ?? 0;
+
+                $componentName =
+                    $comp['name']
+                    ?? 'Unknown';
+
+                $pkgComponents[$componentName] =
+                    $comp['amount'] ?? 0;
             }
-            
+
             $packagesEarnings[] = [
                 'name' => $pkgName,
                 'currency' => $pkgCurrency,
                 'components' => $pkgComponents,
                 'worked_days' => $loc['worked_days'] ?? 0,
-                'subtotal' => $loc['subtotal'] ?? array_sum($pkgComponents)
+                'subtotal' =>
+                    $loc['subtotal']
+                    ?? array_sum($pkgComponents),
             ];
         }
 
-        $totalWorkedDays = array_sum(array_column($locationBreakdown, 'worked_days'));
+        $totalWorkedDays =
+            array_sum(
+                array_column(
+                    $locationBreakdown,
+                    'worked_days'
+                )
+            );
 
-        // --- Deductions ---
-        $deductionsList    = [];
-        $deductionsDetails = $data['step_4']['deductions'] ?? [];
+        /*
+        |--------------------------------------------------------------------------
+        | Deductions
+        |--------------------------------------------------------------------------
+        */
+
+        $deductionsList = [];
+
+        $deductionsDetails =
+            $data['step_4']['deductions'] ?? [];
+
         foreach ($deductionsDetails as $ded) {
-            $name = $ded['type'] ?? $ded['name'] ?? $ded['component_name'] ?? 'Unknown';
-            $deductionsList[$name] = ($deductionsList[$name] ?? 0) + ($ded['amount'] ?? 0);
+
+            $name =
+                $ded['type']
+                ?? $ded['name']
+                ?? $ded['component_name']
+                ?? 'Unknown';
+
+            $deductionsList[$name] =
+                ($deductionsList[$name] ?? 0)
+                + ($ded['amount'] ?? 0);
         }
 
-        $totalDeductions = $data['step_6']['total_deductions'] ?? array_sum($deductionsList);
+        $totalDeductions =
+            $data['step_6']['total_deductions']
+            ?? array_sum($deductionsList);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Leave Details
+        |--------------------------------------------------------------------------
+        */
+
+        $leaveDetails = $leaveDetails ?? [];
+        $totalLeaveDays = $totalLeaveDays ?? 0;
+
+        /*
+        |--------------------------------------------------------------------------
+        | Mask Bank Details
+        |--------------------------------------------------------------------------
+        */
+
+        $maskedAccount =
+            !empty($accountNo) && $accountNo !== 'N/A'
+            ? substr($accountNo, 0, 4)
+            . str_repeat(
+                'X',
+                max(0, strlen($accountNo) - 6)
+            )
+            . substr($accountNo, -2)
+            : 'N/A';
+
+        $maskedIfsc =
+            !empty($ifsc) && $ifsc !== 'N/A'
+            ? substr($ifsc, 0, 4)
+            . str_repeat(
+                'X',
+                max(0, strlen($ifsc) - 4)
+            )
+            : 'N/A';
+
+        /*
+        |--------------------------------------------------------------------------
+        | Final Salary
+        |--------------------------------------------------------------------------
+        */
+
+        $netPay = (float) ($payroll->net_pay ?? 0);
     @endphp
-    @php
-        $maskedAccount = !empty($accountNo)
-            ? substr($accountNo, 0, 4) .
-            str_repeat('X', max(0, strlen($accountNo) - 6)) .
-            substr($accountNo, -2)
-            : '-';
 
-        $maskedIfsc = !empty($ifsc)
-            ? substr($ifsc, 0, 4) .
-            str_repeat('X', max(0, strlen($ifsc) - 4))
-            : '-';
-    @endphp
+    <title>Payslip - {{ $empName }}</title>
 
-    <!-- Header -->
-    <table class="brand-bar">
-        <tr>
-            <td>
-                <div class="company-name">Probim LLC</div>
-                <div class="company-sub">Payroll &amp; HR Services</div>
-            </td>
-            <td>
-                <div class="payslip-tag">PAYSLIP</div>
-                <div class="payslip-ref">Payment ID: #{{ $paymentId }}</div>
-            </td>
-        </tr>
-    </table>
+    <style>
+        @page {
+            size: A4 portrait;
+            margin: 20mm 6mm;
+        }
 
-    <!-- Stats strip -->
-    <table class="stats-strip">
-        <tr>
-            <td>
-                <div class="stat-label">Pay Period</div>
-                <div class="stat-value">{{ $monthName }} {{ $yearFull }}</div>
-            </td>
-            <td>
-                <div class="stat-label">Payment Date</div>
-                <div class="stat-value">{{ $paymentDate }}</div>
-            </td>
-            <td>
-                <div class="stat-label">Worked Days</div>
-                <div class="stat-value">{{ $totalWorkedDays }} / {{ $daysInMonth }}</div>
-            </td>
-            <td>
-                <div class="stat-label">Net Pay</div>
-                <div class="stat-value highlight">{{ $currency }} {{ number_format($payroll->net_pay, 2) }}</div>
-            </td>
-        </tr>
-    </table>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            background: #ffffff;
+        }
 
-    <!-- Employee + Bank details -->
-    <table class="details-grid">
-        <tr>
-            <td>
-                <div class="detail-card">
-                    <h4>Employee Details</h4>
-                    <div class="detail-row"><span class="label">Name:</span> <span class="value">{{ $empName }}</span></div>
-                    <div class="detail-row"><span class="label">EID:</span> <span class="value">{{ $eid }}</span></div>
-                    <div class="detail-row"><span class="label">Designation:</span> <span class="value">{{ $designation }}</span></div>
-                    <div class="detail-row"><span class="label">Date of Joining:</span> <span class="value">{{ $doj }}</span></div>
-                </div>
-            </td>
-            <td>
-                <div class="detail-card">
-                    <h4>Bank Details</h4>
-                    <div class="detail-row"><span class="label">Account #:</span> <span class="value">{{ $maskedAccount }}</span></div>
-                    <div class="detail-row"><span class="label">Bank:</span> <span class="value">{{ $bankName }}</span></div>
-                    <div class="detail-row"><span class="label">IFSC / SWIFT:</span> <span class="value">{{ $maskedIfsc }}</span></div>
-                    <div class="detail-row"><span class="label">Branch:</span> <span class="value">{{ $branch }}</span></div>
-                </div>
-            </td>
-        </tr>
-    </table>
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            font-size: 14px;
+            line-height: 3;
+            color: #111827;
+        }
 
-    <!-- Earnings Packages -->
-    @foreach($packagesEarnings as $pkg)
-        <div class="section-title earnings">Earnings: {{ $pkg['name'] }} Package ({{ $pkg['worked_days'] }} Days)</div>
-        <table class="line-table">
-            @foreach($pkg['components'] as $name => $amount)
-                <tr>
-                    <td>{{ $name }}</td>
-                    <td class="amt">{{ $pkg['currency'] }} {{ number_format($amount, 2) }}</td>
-                </tr>
-            @endforeach
-            @if(count($pkg['components']) === 0)
-                <tr><td colspan="2" style="color:#94a3b8;">No earnings recorded in this package.</td></tr>
-            @endif
-            <tr class="subtotal">
-                <td>Subtotal for {{ $pkg['name'] }} Package</td>
-                <td class="amt">{{ $pkg['currency'] }} {{ number_format($pkg['subtotal'], 2) }}</td>
-            </tr>
-        </table>
-    @endforeach
+        /* =========================================
+   MAIN WRAPPER - FULL A4 HEIGHT
+   ========================================= */
 
-    @if(count($packagesEarnings) === 0)
-        <div class="section-title earnings">Earnings</div>
-        <table class="line-table">
-            <tr><td colspan="2" style="color:#94a3b8;">No earnings packages recorded.</td></tr>
-        </table>
-    @endif
+        .payslip-wrapper {
+            position: relative;
+            width: 100%;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            padding-bottom: 8mm;
+        }
 
-    @if($deductionsList)
-    <!-- Deductions -->
-    @if(count($deductionsList) > 0 || $totalDeductions > 0)
-    <div class="section-title deductions">Global Deductions</div>
-    <table class="line-table">
-        @foreach($deductionsList as $name => $amount)
+        /* =========================================
+           TOP ACCENT
+           ========================================= */
+
+        .header-accent {
+            height: 10px;
+            background: #047857;
+        }
+
+        /* =========================================
+           HEADER
+           ========================================= */
+
+        .header-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .header-table td {
+            border: none;
+            vertical-align: top;
+            padding: 6px 10px 4px 10px;
+        }
+
+        .company-details {
+            width: 65%;
+        }
+
+        .doc-title {
+            width: 35%;
+            text-align: right;
+            font-size: 20px;
+        }
+
+        .company-details h1 {
+            margin: 0;
+            padding: 0;
+            font-size: 24px;
+            line-height: 2;
+            font-weight: bold;
+            color: #064e3b;
+            text-transform: uppercase;
+        }
+
+        .company-details p {
+            margin: 1px 0 0 0;
+            padding: 0;
+            font-size: 8px;
+            color: #6b7280;
+        }
+
+        .doc-title h2 {
+            margin: 0;
+            padding: 0;
+            font-size: 12px;
+            line-height: 2;
+            font-weight: bold;
+            color: #047857;
+        }
+
+        .doc-title p {
+            margin: 1px 0 0 0;
+            padding: 0;
+            font-size: 6px;
+            color: #6b7280;
+        }
+
+        /* =========================================
+           MAIN CONTENT
+           ========================================= */
+
+        .main-content {
+            padding: 0 10px 4px 10px;
+        }
+
+        /* =========================================
+           PAY SUMMARY
+           ========================================= */
+
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 5px;
+            background: #f0fdf4;
+            border-left: 2px solid #047857;
+            margin-bottom: 20px;
+        }
+
+        .summary-table td {
+            width: 25%;
+            border: none;
+            padding: 4px 6px;
+            vertical-align: middle;
+        }
+
+        .strip-label {
+            display: block;
+            font-size: 8px;
+            line-height: 1.1;
+            text-transform: uppercase;
+            color: #6b7280;
+            font-weight: bold;
+        }
+
+        .strip-value {
+            display: block;
+            margin-top: 1px;
+            font-size: 7.5px;
+            line-height: 2;
+            font-weight: bold;
+            color: #064e3b;
+        }
+
+        /* =========================================
+           EMPLOYEE / BANK INFORMATION
+           ========================================= */
+
+        .info-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 4px 0;
+            margin: 0 -4px 5px -4px;
+        }
+
+        .info-table td {
+            width: 50%;
+            vertical-align: top;
+            border: 1px solid #e5e7eb;
+            padding: 4px 6px;
+            background: #ffffff;
+        }
+
+        .col-title {
+            font-size: 12px;
+            line-height: 2;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #047857;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 2px;
+            margin-bottom: 3px;
+        }
+
+        .info-row {
+            width: 100%;
+            margin-bottom: 2px;
+            font-size: 8px;
+            line-height: 2;
+        }
+
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-row-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .info-row-table td {
+            border: none;
+            padding: 0;
+            background: transparent;
+        }
+
+        .info-label {
+            width: 40%;
+            color: #6b7280;
+        }
+
+        .info-val {
+            width: 60%;
+            text-align: right;
+            font-weight: bold;
+            color: #111827;
+            word-wrap: break-word;
+        }
+
+        /* =========================================
+           TABLE CONTAINER
+           ========================================= */
+
+        .table-container {
+            width: 100%;
+            margin-bottom: 5px;
+            page-break-inside: avoid;
+        }
+
+        /* =========================================
+           SALARY TABLE
+           ========================================= */
+
+        .salary-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 8px;
+            margin-top:20px;
+        }
+
+        .salary-table th {
+            background: #047857;
+            color: #ffffff;
+            font-weight: bold;
+            text-align: left;
+            padding: 4px 6px;
+            font-size: 8px;
+            line-height: 2;
+            border: 1px solid #047857;
+        }
+
+        .salary-table th.amount-col {
+            width: 25%;
+            text-align: right;
+        }
+
+        .salary-table td {
+            padding: 3.5px 6px;
+            border-bottom: 1px solid #e5e7eb;
+            color: #111827;
+            line-height: 2;
+        }
+
+        .salary-table td.amount-col {
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        /* =========================================
+           PACKAGE HEADER
+           ========================================= */
+
+        .pkg-header-row td {
+            background: #d1fae5;
+            font-weight: bold;
+            color: #064e3b;
+            padding-top: 3px;
+            padding-bottom: 3px;
+            border-bottom: 1px solid #a7f3d0;
+        }
+
+        .indent-item {
+            padding-left: 12px !important;
+            color: #374151;
+        }
+
+        /* =========================================
+           SUBTOTAL
+           ========================================= */
+
+        .subtotal-row td {
+            background: #f9fafb;
+            font-weight: bold;
+            border-bottom: 1px solid #d1d5db;
+            padding-top: 3px;
+            padding-bottom: 3px;
+        }
+
+        /* =========================================
+           LEAVE SUMMARY
+           ========================================= */
+
+        .leave-summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 5px;
+            table-layout: fixed;
+            font-size: 8px;
+            margin-top:20px;
+        }
+
+        .leave-summary-table th {
+            background: #047857;
+            color: #ffffff;
+            font-weight: bold;
+            text-align: left;
+            padding: 4px 6px;
+            font-size: 8px;
+            line-height: 2;
+            border: 1px solid #047857;
+        }
+
+        .leave-summary-table td {
+            padding: 3.5px 6px;
+            border-bottom: 1px solid #e5e7eb;
+            line-height: 2;
+        }
+
+        .leave-summary-table .leave-type {
+            width: 35%;
+        }
+
+        .leave-summary-table .leave-date {
+            width: 20%;
+        }
+
+        .leave-summary-table .leave-days {
+            width: 15%;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .leave-total-row td {
+            background: #f9fafb;
+            font-weight: bold;
+            border-bottom: 1px solid #d1d5db;
+        }
+
+        /* =========================================
+           NET PAY
+           ========================================= */
+
+        .net-pay-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px dashed #047857;
+            background: #f0fdf4;
+            margin-top: 20px;
+        }
+
+        .net-pay-table td {
+            border: none;
+            padding: 5px 8px;
+            vertical-align: middle;
+        }
+
+        .net-pay-text {
+            width: 60%;
+            font-size: 14px;
+            font-weight: bold;
+            color: #064e3b;
+        }
+
+        .net-pay-val {
+            width: 40%;
+            text-align: right;
+            font-size: 14px;
+            font-weight: bold;
+            color: #047857;
+            white-space: nowrap;
+        }
+
+        /* =========================================
+           FOOTER
+           ========================================= */
+
+        /* =========================================
+   FOOTER - BOTTOM OF A4 PAGE
+   ========================================= */
+
+        .footer {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            border-top: 1px solid #e5e7eb;
+            padding: 4px;
+            text-align: center;
+            font-size: 5.5px;
+            line-height: 2;
+            color: #6b7280;
+            background: #f9fafb;
+        }
+
+        /* =========================================
+           DOMPDF PAGE BREAK CONTROL
+           ========================================= */
+
+        .header-table,
+        .summary-table,
+        .info-table,
+        .salary-table,
+        .leave-summary-table,
+        .net-pay-table {
+            page-break-inside: avoid;
+        }
+
+        tr {
+            page-break-inside: avoid;
+        }
+
+        thead {
+            display: table-header-group;
+        }
+
+        /* =========================================
+           PRINT
+           ========================================= */
+
+        @media print {
+
+            @page {
+                size: A4 portrait;
+                margin: 6mm;
+            }
+
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+            }
+
+        }
+    </style>
+
+</head>
+
+<body>
+
+    <div class="payslip-wrapper">
+
+        <!-- =========================================
+         HEADER ACCENT
+         ========================================= -->
+
+        <div class="header-accent"></div>
+
+
+        <!-- =========================================
+         HEADER
+         ========================================= -->
+
+        <table class="header-table">
+
             <tr>
-                <td>{{ $name }}</td>
-                <td class="amt">{{ $currency }} {{ number_format($amount, 2) }}</td>
+
+                <td class="company-details">
+
+                    <h1>Probim LLC</h1>
+
+                    <p>
+                        Payroll &amp; HR Services
+                    </p>
+
+                </td>
+
+
+                <td class="doc-title">
+
+                    <h2>PAYSLIP</h2>
+
+                    <p>
+                        #{{ $paymentId }}
+                    </p>
+
+                </td>
+
             </tr>
-        @endforeach
-        @if(count($deductionsList) === 0)
-            <tr><td colspan="2" style="color:#94a3b8;">No deductions applied.</td></tr>
-        @endif
-        <tr class="subtotal">
-            <td>Total Deductions (Converted)</td>
-            <td class="amt">{{ $currency }} {{ number_format($totalDeductions, 2) }}</td>
-        </tr>
-    </table>
-    @endif
-    @endif
 
-    <!-- Net pay bar -->
-    <table class="net-bar">
-        <tr>
-            <td class="net-label">Final Net Pay</td>
-            <td class="net-value">{{ $currency }} {{ number_format($payroll->net_pay, 2) }}</td>
-        </tr>
-    </table>
+        </table>
 
-    <div class="footer-note">
-        This is a system generated payslip and does not require a signature.
+
+        <div class="main-content">
+
+            <!-- =========================================
+             PAY SUMMARY
+             ========================================= -->
+
+            <table class="summary-table">
+
+                <tr>
+
+                    <td>
+
+                        <span class="strip-label">
+                            Pay Period
+                        </span>
+
+                        <span class="strip-value">
+                            {{ $monthName }} {{ $yearFull }}
+                        </span>
+
+                    </td>
+
+
+                    <td>
+
+                        <span class="strip-label">
+                            Payment Date
+                        </span>
+
+                        <span class="strip-value">
+                            {{ $paymentDate }}
+                        </span>
+
+                    </td>
+
+
+                    <td>
+
+                        <span class="strip-label">
+                             Worked Days
+                        </span>
+
+                        <span class="strip-value">
+                            {{ $totalWorkedDays }} / {{ $working_days }}
+                        </span>
+
+                    </td>
+
+
+                    <td>
+
+                        <span class="strip-label">
+                            Net Disbursement
+                        </span>
+
+                        <span class="strip-value">
+                            {{ $currency }}
+                            {{ number_format($netPay, 2) }}
+                        </span>
+
+                    </td>
+
+                </tr>
+
+            </table>
+
+
+            <!-- =========================================
+             EMPLOYEE & BANK DETAILS
+             ========================================= -->
+
+            <table class="info-table">
+
+                <tr>
+
+                    <!-- Employee Information -->
+
+                    <td>
+
+                        <div class="col-title">
+                            Employee Information
+                        </div>
+
+
+                        <div class="info-row">
+
+                            <table class="info-row-table">
+
+                                <tr>
+
+                                    <td class="info-label">
+                                        Name
+                                    </td>
+
+                                    <td class="info-val">
+                                        {{ $empName }}
+                                    </td>
+
+                                </tr>
+
+                            </table>
+
+                        </div>
+
+
+                        <div class="info-row">
+
+                            <table class="info-row-table">
+
+                                <tr>
+
+                                    <td class="info-label">
+                                        EID
+                                    </td>
+
+                                    <td class="info-val">
+                                        {{ $eid }}
+                                    </td>
+
+                                </tr>
+
+                            </table>
+
+                        </div>
+
+
+                        <div class="info-row">
+
+                            <table class="info-row-table">
+
+                                <tr>
+
+                                    <td class="info-label">
+                                        Designation
+                                    </td>
+
+                                    <td class="info-val">
+                                        {{ $designation }}
+                                    </td>
+
+                                </tr>
+
+                            </table>
+
+                        </div>
+
+
+                        <div class="info-row">
+
+                            <table class="info-row-table">
+
+                                <tr>
+
+                                    <td class="info-label">
+                                        Joining Date
+                                    </td>
+
+                                    <td class="info-val">
+                                        {{ $doj }}
+                                    </td>
+
+                                </tr>
+
+                            </table>
+
+                        </div>
+
+                    </td>
+
+
+                    <!-- Bank Details -->
+
+                    <td>
+
+                        <div class="col-title">
+                            Bank Details
+                        </div>
+
+
+                        <div class="info-row">
+
+                            <table class="info-row-table">
+
+                                <tr>
+
+                                    <td class="info-label">
+                                        Bank
+                                    </td>
+
+                                    <td class="info-val">
+                                        {{ $bankName }}
+                                    </td>
+
+                                </tr>
+
+                            </table>
+
+                        </div>
+
+
+                        <div class="info-row">
+
+                            <table class="info-row-table">
+
+                                <tr>
+
+                                    <td class="info-label">
+                                        Account No.
+                                    </td>
+
+                                    <td class="info-val">
+                                        {{ $maskedAccount }}
+                                    </td>
+
+                                </tr>
+
+                            </table>
+
+                        </div>
+
+
+                        <div class="info-row">
+
+                            <table class="info-row-table">
+
+                                <tr>
+
+                                    <td class="info-label">
+                                        SWIFT Code
+                                    </td>
+
+                                    <td class="info-val">
+                                        {{ $maskedIfsc }}
+                                    </td>
+
+                                </tr>
+
+                            </table>
+
+                        </div>
+
+
+                        <div class="info-row">
+
+                            <table class="info-row-table">
+
+                                <tr>
+
+                                    <td class="info-label">
+                                        Branch
+                                    </td>
+
+                                    <td class="info-val">
+                                        {{ $branch }}
+                                    </td>
+
+                                </tr>
+
+                            </table>
+
+                        </div>
+
+                    </td>
+
+                </tr>
+
+            </table>
+
+
+            <!-- =========================================
+             LEAVE SUMMARY
+             ========================================= -->
+
+            <div class="table-container">
+
+                <table class="leave-summary-table">
+
+                    <thead>
+
+                        <tr>
+
+                            <th class="leave-type">
+                                Leave Type
+                            </th>
+
+                            <th class="leave-date">
+                                From
+                            </th>
+
+                            <th class="leave-date">
+                                To
+                            </th>
+
+                            <th class="leave-days">
+                                Days
+                            </th>
+
+                        </tr>
+
+                    </thead>
+
+
+                    <tbody>
+
+                        @if(count($leaveDetails) > 0)
+
+                            @foreach($leaveDetails as $leave)
+
+                                <tr>
+
+                                    <td>
+                                        {{ $leave['leave_type'] }}
+                                    </td>
+
+                                    <td>
+                                        {{ $leave['start_date'] }}
+                                    </td>
+
+                                    <td>
+                                        {{ $leave['end_date'] }}
+                                    </td>
+
+                                    <td class="leave-days">
+                                        {{ $leave['days'] }}
+                                    </td>
+
+                                </tr>
+
+                            @endforeach
+
+
+                            <tr class="leave-total-row">
+
+                                <td colspan="3">
+                                    Total Leave Taken
+                                </td>
+
+                                <td class="leave-days">
+                                    {{ $totalLeaveDays }}
+                                </td>
+
+                            </tr>
+
+                        @else
+
+                            <tr>
+
+                                <td colspan="4" style="text-align:center;">
+                                    No leaves taken during this payroll period
+                                </td>
+
+                            </tr>
+
+                        @endif
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+
+            <!-- =========================================
+             EARNINGS BREAKDOWN
+             ========================================= -->
+
+            <div class="table-container">
+
+                <table class="salary-table">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>
+                                Earnings Breakdown
+                            </th>
+
+                            <th class="amount-col">
+                                Amount
+                            </th>
+
+                        </tr>
+
+                    </thead>
+
+
+                    <tbody>
+
+                        @if(count($packagesEarnings) > 0)
+
+                            @foreach($packagesEarnings as $index => $package)
+
+                                                <!-- Package Header -->
+
+                                                <tr class="pkg-header-row">
+
+                                                    <td colspan="2">
+
+                                                        Package {{ $index + 1 }}
+
+                                                        -
+
+                                                        {{ $package['name'] }}
+
+                                                        ({{ $package['worked_days'] }} Days)
+
+                                                    </td>
+
+                                                </tr>
+
+
+                                                <!-- Salary Components -->
+
+                                                @if(count($package['components']) > 0)
+
+                                                    @foreach($package['components'] as $componentName => $amount)
+
+                                                        <tr>
+
+                                                            <td class="indent-item">
+
+                                                                {{ $componentName }}
+
+                                                            </td>
+
+                                                            <td class="amount-col">
+
+                                                                {{ $package['currency'] }}
+
+                                                                {{ number_format((float) $amount, 2) }}
+
+                                                            </td>
+
+                                                        </tr>
+
+                                                    @endforeach
+
+                                                @else
+
+                                                 <tr>
+
+                                <td colspan="3" style="text-align:center;">
+                                                            No earnings recorded in this package
+                                </td>
+
+                            </tr>
+
+
+                                                @endif
+
+
+                                                <!-- Package Subtotal -->
+
+                                                <tr class="subtotal-row">
+
+                                                    <td>
+                                                        Subtotal Package {{ $index + 1 }}
+                                                    </td>
+
+                                                    <td class="amount-col">
+
+                                                        {{ $package['currency'] }}
+
+                                                        {{ number_format(
+                                    (float) $package['subtotal'],
+                                    2
+                                ) }}
+
+                                                    </td>
+
+                                                </tr>
+
+                            @endforeach
+
+                        @else
+
+                         <tr>
+
+                                <td colspan="3" style="text-align:center;">
+                                    No earnings recorded
+                                </td>
+
+                            </tr>
+
+                        @endif
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+
+            <!-- =========================================
+             DEDUCTIONS BREAKDOWN
+             ========================================= -->
+
+            <div class="table-container">
+
+                <table class="salary-table">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>
+                                Deductions Breakdown
+                            </th>
+
+                            <th class="amount-col">
+                                Amount
+                            </th>
+
+                        </tr>
+
+                    </thead>
+
+
+                    <tbody>
+
+                        @if(count($deductionsList) > 0)
+
+                            @foreach($deductionsList as $name => $amount)
+
+                                                <tr>
+
+                                                    <td>
+                                                        {{ $name }}
+                                                    </td>
+
+                                                    <td class="amount-col">
+
+                                                        {{ $currency }}
+
+                                                        {{ number_format(
+                                    (float) $amount,
+                                    2
+                                ) }}
+
+                                                    </td>
+
+                                                </tr>
+
+                            @endforeach
+ <!-- Total Deductions -->
+
+                        <tr class="subtotal-row">
+
+                            <td>
+                                Total Deductions
+                            </td>
+
+                            <td class="amount-col">
+
+                                {{ $currency }}
+
+                                {{ number_format(
+    (float) $totalDeductions,
+    2
+) }}
+
+                            </td>
+
+                        </tr>
+                        @else
+
+                         <tr>
+
+                                <td colspan="3" style="text-align:center;">
+                                    No deductions available
+                                </td>
+
+                            </tr>
+
+                        @endif
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+
+            <!-- =========================================
+             FINAL NET PAY
+             ========================================= -->
+
+            <table class="net-pay-table">
+
+                <tr>
+
+                    <td class="net-pay-text">
+
+                        FINAL NET PAY
+
+                    </td>
+
+
+                    <td class="net-pay-val">
+
+                        {{ $currency }}
+
+                        {{ number_format(
+    $netPay,
+    2
+) }}
+
+                    </td>
+
+                </tr>
+
+            </table>
+
+        </div>
+
+
+        <!-- =========================================
+         FOOTER
+         ========================================= -->
+
+        <div class="footer">
+
+            This is a system generated payslip and does not require a signature.
+
+        </div>
+
     </div>
 
 </body>
+
 </html>

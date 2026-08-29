@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Models\ProjectTimeLog;
 
 class Project extends Model
 {
@@ -45,5 +46,10 @@ class Project extends Model
             ->using(ProjectAssignment::class)
             ->withPivot('assigned_by', 'deleted_by', 'deleted_at')
             ->wherePivot('deleted_at', null);
+    }
+
+    public function timeLogs()
+    {
+        return $this->hasMany(ProjectTimeLog::class, 'project_id');
     }
 }

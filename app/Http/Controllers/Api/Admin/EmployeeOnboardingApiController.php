@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Employee;
+use App\Models\User;
 use App\Models\EmployeeSalaryPackage;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -12,28 +13,71 @@ use Illuminate\Support\Facades\DB;
 class EmployeeOnboardingApiController extends ApiController
 {
     /**
-     * Save basic employee details
+     * List all employees currently in the onboarding process.
      */
-    public function saveDetails(Request $request): JsonResponse
+    public function index(): JsonResponse
     {
-        $user_id = $request->user_id;
-        $employee = null;
+        $employees = Employee::whereHas('user', function ($query) {
+            $query->where('status', 'pending_onboarding');
+        })
+            ->with([
+                'user.department',
+                'user.designation',
+                'salaryPackages.salaryComponents',
+                'bankDetails',
+            ])
+            ->get();
 
-        if ($user_id) {
-            $employee = Employee::where('user_id', $user_id)->orWhere('id', $user_id)->first();
+        return $this->success($employees, 'Onboarding records fetched successfully');
+    }
 
-            if (!$employee) {
-                return $this->error('Employee not found with the provided ID', 404);
-            }
-        } else {
-            $employee = new Employee();
+    /**
+     * Show the current onboarding details for a single employee, by employee ID.
+     * Reflects everything saved so far via saveDetails, saveSalary, and saveBanks.
+     */
+    public function show($id): JsonResponse
+    {
+        $employee = Employee::whereHas('user', function ($query) {
+            $query->where('status', 'pending_onboarding');
+        })
+            ->with([
+                'user.department',
+                'user.designation',
+                'salaryPackages.salaryComponents',
+                'bankDetails',
+            ])
+            ->find($id);
+
+        if (!$employee) {
+            return $this->error('Onboarding employee not found', 404);
+        }
+
+        return $this->success($employee, 'Onboarding details fetched successfully');
+    }
+
+    /**
+     * Edit the basic details of a single onboarding employee, by employee ID.
+     */
+    public function update(Request $request, $id): JsonResponse
+    {
+        $employee = Employee::whereHas('user', function ($query) {
+            $query->where('status', 'pending_onboarding');
+        })->find($id);
+
+        if (!$employee) {
+            return $this->error('Onboarding employee not found', 404);
         }
 
         $request->validate([
             'first_name' => 'nullable|string|max:255',
             'last_name' => 'nullable|string|max:255',
-            'personal_email' => 'nullable|email|max:255',
-            'personal_number' => 'required|string|max:255',
+            'personal_email' => [
+                'nullable',
+                'email',
+                'max:255',
+                \Illuminate\Validation\Rule::unique('employees', 'personal_email')->whereNull('deleted_at')->ignore($employee->id),
+            ],
+            'personal_number' => 'nullable|string|max:255',
             'nationality' => 'nullable|string|max:255',
             'address' => 'nullable|string',
             'joining_date' => 'nullable|date',
@@ -42,10 +86,10 @@ class EmployeeOnboardingApiController extends ApiController
             'highest_education' => 'nullable|string|max:255',
             'department_id' => 'nullable|integer|exists:departments,id',
             'designation_id' => 'nullable|integer|exists:designations,id',
-            'special_days' => 'nullable|array'
+            'special_days' => 'nullable|array',
         ]);
 
-        DB::transaction(function () use ($request, &$employee) {
+        DB::transaction(function () use ($request, $employee) {
             $employeeData = $request->only([
                 'first_name',
                 'last_name',
@@ -56,30 +100,300 @@ class EmployeeOnboardingApiController extends ApiController
                 'joining_date',
                 'experience_level',
                 'key_skills',
-                'highest_education'
+                'highest_education',
             ]);
 
             if ($request->has('special_days')) {
                 $employeeData['special_days'] = $request->special_days;
             }
 
-            if (!$employee->exists) {
-                // Generate a temporary user email if not provided
-                $userEmail = $request->personal_email ?? 'temp_' . \Illuminate\Support\Str::random(8) . '@example.com';
+            $employee->update($employeeData);
 
-                // Create a User record
+            if ($employee->user) {
+                $userData = [];
+
+                if ($request->has('department_id')) {
+                    $userData['department_id'] = $request->department_id;
+                }
+
+                if ($request->has('designation_id')) {
+                    $userData['designation_id'] = $request->designation_id;
+                }
+
+                if (!empty($userData)) {
+                    $employee->user->update($userData);
+                }
+            }
+        });
+
+        return $this->success($employee->fresh()->load('user'), 'Onboarding details updated successfully');
+    }
+
+    /**
+     * Delete an onboarding employee (and their linked user account), by employee ID.
+     */
+    public function destroy($id): JsonResponse
+    {
+        $employee = Employee::whereHas('user', function ($query) {
+            $query->where('status', 'pending_onboarding');
+        })->find($id);
+
+        if (!$employee) {
+            return $this->error('Onboarding employee not found', 404);
+        }
+
+        DB::transaction(function () use ($employee) {
+            $user = $employee->user;
+
+            $employee->delete();
+
+            if ($user) {
+                $user->delete();
+            }
+        });
+
+        return $this->success(null, 'Onboarding employee deleted successfully');
+    }
+
+    /**
+     * Save basic employee details
+     */
+    // public function saveDetails(Request $request): JsonResponse
+    // {
+    //     $user_id = $request->user_id;
+    //     $employee = null;
+
+    //     if ($user_id) {
+    //         $employee = Employee::where('id', $user_id)->first();
+
+    //         if (!$employee) {
+    //             return $this->error('Employee not found with the provided ID', 404);
+    //         }
+    //     } else {
+    //         $employee = new Employee();
+    //     }
+
+    //     $request->validate(
+    //         [
+    //             'first_name' => 'nullable|string|max:255',
+    //             'last_name' => 'nullable|string|max:255',
+    //             'personal_email' => 'nullable|email|unique:employees,personal_email|max:255',
+    //             'personal_number' => 'required|string|max:255',
+    //             'nationality' => 'nullable|string|max:255',
+    //             'address' => 'nullable|string',
+    //             'joining_date' => 'nullable|date',
+    //             'experience_level' => 'nullable|string|max:255',
+    //             'key_skills' => 'nullable|string',
+    //             'role_id' => 'required',
+    //             'type' => 'required',
+    //             'highest_education' => 'nullable|string|max:255',
+    //             'department_id' => 'nullable|integer|exists:departments,id',
+    //             'designation_id' => 'nullable|integer|exists:designations,id',
+    //             'special_days' => 'nullable|array',
+    //         ],
+    //         [
+    //             'first_name.required' => 'Please enter the first name.',
+    //             'last_name.required' => 'Please enter the last name.',
+    //             'personal_email.required' => 'Please enter the personal email address.',
+    //             'personal_email.email' => 'Please enter a valid email address.',
+    //             'personal_email.unique' => 'This personal email is already registered.',
+    //             'personal_number.required' => 'Please enter the personal phone number.',
+    //             'joining_date.date' => 'Please enter a valid joining date.',
+    //             'role_id.required' => 'Please select a role.',
+    //             'type.required' => 'Please select the employee type.',
+    //             'department_id.exists' => 'The selected department does not exist.',
+    //             'designation_id.exists' => 'The selected designation does not exist.',
+    //             'special_days.array' => 'Special days must be provided as a valid list.',
+    //         ]
+    //     );
+
+    //     DB::transaction(function () use ($request, &$employee) {
+    //         $employeeData = $request->only([
+    //             'first_name',
+    //             'last_name',
+    //             'personal_email',
+    //             'personal_number',
+    //             'nationality',
+    //             'address',
+    //             'joining_date',
+    //             'experience_level',
+    //             'key_skills',
+    //             'highest_education'
+    //         ]);
+
+    //         if ($request->has('special_days')) {
+    //             $employeeData['special_days'] = $request->special_days;
+    //         }
+
+    //         if (!$employee->exists) {
+    //             // Generate a temporary user email if not provided
+    //             $userEmail = $request->personal_email ?? 'temp_' . \Illuminate\Support\Str::random(8) . '@example.com';
+
+    //             // Create a User record
+    //             $user = \App\Models\User::create([
+    //                 'username' => $userEmail,
+    //                 'email' => $userEmail,
+    //                 'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(10)),
+    //                 'organization_id' => $request->organization_id ?? 1,
+    //                 'company_id' => $request->company_id ?? null,
+    //                 'type' => 'employee',
+    //                 'role_id' => $request->role_id ?? null,
+    //                 'status' => 'onboarding',
+    //             ]);
+
+    //             $employeeData['user_id'] = $user->id;
+    //             $employeeData['employee_id'] = 'EMP-' . strtoupper(\Illuminate\Support\Str::random(6));
+    //             $employeeData['company_email'] = $userEmail;
+
+    //             if (empty($employeeData['personal_email'])) {
+    //                 $employeeData['personal_email'] = $userEmail;
+    //             }
+
+    //             if (empty($employeeData['first_name'])) {
+    //                 $employeeData['first_name'] = 'Draft';
+    //             }
+
+    //             $employee->fill($employeeData);
+    //             $employee->save();
+    //         } else {
+    //             $employee->update($employeeData);
+    //         }
+
+    //         if ($employee->user) {
+    //             $userData = [];
+    //             if ($request->has('department_id'))
+    //                 $userData['department_id'] = $request->department_id;
+    //             if ($request->has('designation_id'))
+    //                 $userData['designation_id'] = $request->designation_id;
+
+    //             if (!empty($userData)) {
+    //                 $employee->user->update($userData);
+    //             }
+    //         }
+    //     });
+
+    //     return $this->success($employee->fresh()->load('user'), 'Employee details saved successfully');
+    // }
+
+    public function saveDetails(Request $request): JsonResponse
+    {
+        $userId = $request->user_id;
+        $employee = null;
+
+        /*
+    |--------------------------------------------------------------------------
+    | Find employee for update
+    |--------------------------------------------------------------------------
+    */
+        if ($userId) {
+
+            $employee = Employee::where('user_id', $userId)->first();
+
+            if (!$employee) {
+                return $this->error(
+                    'Employee not found with the provided user ID',
+                    404
+                );
+            }
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+        $request->validate(
+            [
+                'first_name' => 'nullable|string|max:255',
+                'last_name' => 'nullable|string|max:255',
+
+                'personal_email' => [
+                    'nullable',
+                    'email',
+                    'max:255',
+                    \Illuminate\Validation\Rule::unique(
+                        'employees',
+                        'personal_email'
+                    )->whereNull('deleted_at')->ignore($employee?->id),
+                ],
+
+                'personal_number' => 'required|string|max:255',
+                'nationality' => 'nullable|string|max:255',
+                'address' => 'nullable|string',
+                'joining_date' => 'nullable|date',
+                'experience_level' => 'nullable|string|max:255',
+                'key_skills' => 'nullable|string',
+                'role_id' => 'required',
+                'type' => 'required',
+                'highest_education' => 'nullable|string|max:255',
+                'department_id' => 'nullable|integer|exists:departments,id',
+                'designation_id' => 'nullable|integer|exists:designations,id',
+                'special_days' => 'nullable|array',
+            ],
+            [
+                'first_name.required' => 'Please enter the first name.',
+                'last_name.required' => 'Please enter the last name.',
+                'personal_email.email' => 'Please enter a valid email address.',
+                'personal_email.unique' => 'This personal email is already registered.',
+                'personal_number.required' => 'Please enter the personal phone number.',
+                'joining_date.date' => 'Please enter a valid joining date.',
+                'role_id.required' => 'Please select a role.',
+                'type.required' => 'Please select the employee type.',
+                'department_id.exists' => 'The selected department does not exist.',
+                'designation_id.exists' => 'The selected designation does not exist.',
+                'special_days.array' => 'Special days must be provided as a valid list.',
+            ]
+        );
+
+        DB::transaction(function () use ($request, &$employee, $userId) {
+
+            $employeeData = $request->only([
+                'first_name',
+                'last_name',
+                'personal_email',
+                'personal_number',
+                'nationality',
+                'address',
+                'joining_date',
+                'experience_level',
+                'key_skills',
+                'highest_education',
+            ]);
+
+            if ($request->has('special_days')) {
+                $employeeData['special_days'] = $request->special_days;
+            }
+
+            /*
+        |--------------------------------------------------------------------------
+        | CREATE
+        |--------------------------------------------------------------------------
+        | user_id is NOT provided
+        |--------------------------------------------------------------------------
+        */
+            if (!$userId) {
+
+                $userEmail = $request->personal_email
+                    ?? 'temp_' . \Illuminate\Support\Str::random(8) . '@example.com';
+
+                $password = \Illuminate\Support\Str::random(10);
+
                 $user = \App\Models\User::create([
                     'username' => $userEmail,
                     'email' => $userEmail,
-                    'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(10)),
+                    'password' => \Illuminate\Support\Facades\Hash::make($password),
                     'organization_id' => $request->organization_id ?? 1,
                     'company_id' => $request->company_id ?? null,
                     'type' => 'employee',
-                    'status' => 'onboarding',
+                    'role_id' => $request->role_id ?? null,
+                    'status' => 'pending_onboarding',
                 ]);
 
                 $employeeData['user_id'] = $user->id;
-                $employeeData['employee_id'] = 'EMP-' . strtoupper(\Illuminate\Support\Str::random(6));
+
+                $employeeData['employee_id'] =
+                    'EMP-' . strtoupper(\Illuminate\Support\Str::random(6));
+
                 $employeeData['company_email'] = $userEmail;
 
                 if (empty($employeeData['personal_email'])) {
@@ -90,26 +404,55 @@ class EmployeeOnboardingApiController extends ApiController
                     $employeeData['first_name'] = 'Draft';
                 }
 
-                $employee->fill($employeeData);
-                $employee->save();
-            } else {
-                $employee->update($employeeData);
+                $employee = Employee::create($employeeData);
             }
 
-            if ($employee->user) {
-                $userData = [];
-                if ($request->has('department_id'))
-                    $userData['department_id'] = $request->department_id;
-                if ($request->has('designation_id'))
-                    $userData['designation_id'] = $request->designation_id;
+            /*
+        |--------------------------------------------------------------------------
+        | UPDATE
+        |--------------------------------------------------------------------------
+        | user_id IS provided
+        |--------------------------------------------------------------------------
+        */ else {
 
-                if (!empty($userData)) {
-                    $employee->user->update($userData);
+                $employee->update($employeeData);
+
+                /*
+             * Update User details also
+             */
+                if ($employee->user) {
+
+                    $userData = [];
+
+                    if ($request->has('role_id')) {
+                        $userData['role_id'] = $request->role_id;
+                    }
+
+                    if ($request->has('department_id')) {
+                        $userData['department_id'] = $request->department_id;
+                    }
+
+                    if ($request->has('designation_id')) {
+                        $userData['designation_id'] = $request->designation_id;
+                    }
+
+                    if ($request->has('type')) {
+                        $userData['type'] = $request->type;
+                    }
+
+                    if (!empty($userData)) {
+                        $employee->user->update($userData);
+                    }
                 }
             }
         });
 
-        return $this->success($employee->fresh()->load('user'), 'Employee details saved successfully');
+        return $this->success(
+            $employee->fresh()->load('user'),
+            $userId
+                ? 'Employee details updated successfully'
+                : 'Employee details saved successfully'
+        );
     }
 
     public function getSalaryPackages($id): JsonResponse

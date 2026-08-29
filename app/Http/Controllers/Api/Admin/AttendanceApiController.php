@@ -9,6 +9,7 @@ use App\Models\Employee;
 use App\Models\WorkingHour;
 use App\Models\User;
 use App\Models\AttendanceUpload;
+use App\Models\Holiday;
 use App\Jobs\ProcessAttendanceJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,111 +24,6 @@ class AttendanceApiController extends ApiController
     /**
      * Get Attendance Summary with Stats
      */
-
-    // public function index(Request $request): JsonResponse
-    // {
-    //     $perPage = 100;
-    //     $companyId = $request->get('company_id');
-    //     $employeeName = $request->get('employee_name');
-    //     $datePreset = $request->get('date_preset', 'all');
-
-    //     $query = AttendanceLog::with(['company', 'user.employee', 'user.department'])
-    //         ->select(
-    //             'id',
-    //             'company_id',
-    //             'userid',
-    //             'log_date',
-    //             'working_hours',
-    //             'punch_in_latitude',
-    //             'punch_in_longitude',
-    //             'punch_in_address',
-    //             'punch_out_latitude',
-    //             'punch_out_longitude',
-    //             'punch_out_address',
-    //             'punch_in',
-    //             'punch_out'
-    //         );
-
-    //     if ($companyId) {
-    //         $query->where('company_id', $companyId);
-    //     }
-
-    //     if ($employeeName) {
-    //         $query->whereHas('user.employee', function ($q) use ($employeeName) {
-    //             $q->where('first_name', 'like', "%$employeeName%")
-    //                 ->orWhere('last_name', 'like', "%$employeeName%");
-    //         });
-    //     }
-
-    //     if ($datePreset != 'all') {
-    //         $this->applyDateFilter($query, $datePreset, $request->get('from_date'), $request->get('to_date'));
-    //     }
-
-
-    //     $attendance = $query->groupBy(
-    //         'id',
-    //         'company_id',
-    //         'userid',
-    //         'log_date',
-    //         'working_hours',
-    //         'punch_in_latitude',
-    //         'punch_in_longitude',
-    //         'punch_in_address',
-    //         'punch_out_latitude',
-    //         'punch_out_longitude',
-    //         'punch_out_address',
-    //     )
-    //         ->orderBy('log_date', 'desc')
-    //         ->paginate($perPage);
-
-    //     $attendance->getCollection()->transform(function ($log) {
-    //         $tz = config('app.timezone', 'Asia/Dubai');
-
-    //         // Format date to dd/mm/yyyy
-    //         $log->log_date = $log->log_date
-    //             ? Carbon::parse($log->log_date)->format('d/m/Y')
-    //             : '--';
-
-    //         $log->punch_in = $log->punch_in
-    //             ? Carbon::parse($log->punch_in)->setTimezone($tz)->format('h:i A')
-    //             : '--';
-    //         // Output → "08 Jun 2026, 07:29 AM"
-
-    //         $log->punch_out = $log->punch_out
-    //             ? Carbon::parse($log->punch_out)->setTimezone($tz)->format('h:i A')
-    //             : '--';
-    //         // Output → "08 Jun 2026, 12:32 PM"
-
-    //         // Calculate working_hours dynamically if it is 0 in DB (to fix past data)
-    //         $minutes = $log->working_hours ?? 0;
-
-    //         if ($minutes == 0 && $log->getRawOriginal('punch_in') && $log->getRawOriginal('punch_out')) {
-    //             $in = Carbon::parse($log->getRawOriginal('punch_in'));
-    //             $out = Carbon::parse($log->getRawOriginal('punch_out'));
-    //             $minutes = max(0, $in->diffInMinutes($out));
-    //         }
-
-    //         $hours = intdiv($minutes, 60);
-    //         $mins = $minutes % 60;
-
-    //         if ($minutes == 0)
-    //             $log->working_hours = '--';
-    //         elseif ($hours == 0)
-    //             $log->working_hours = "{$mins} mins";
-    //         elseif ($mins == 0)
-    //             $log->working_hours = "{$hours} hrs";
-    //         else
-    //             $log->working_hours = "{$hours} hrs {$mins} mins";
-
-    //         return $log;
-    //     });
-
-    //     return $this->success([
-    //         'attendance' => $attendance,
-    //         'stats' => $this->getStats()
-    //     ]);
-    // }
-
     public function index(Request $request): JsonResponse
     {
         $dateRange = $request->get('date_range', 'today');
@@ -153,8 +49,25 @@ class AttendanceApiController extends ApiController
         ])
             ->whereHas('user', function ($query) {
                 $query->where('status', 'active')
-                    ->where('type', 'employee');
+                    ->where('type', '!=','admin');
             });
+
+        // If the logged-in user is a manager or team lead,
+        // restrict to employees assigned to their projects.
+        $authUser = auth()->user();
+        if ($authUser && ($authUser->type === 'manager' || $authUser->type === 'team_lead')) {
+            $employeesQuery->whereIn('user_id', function ($q) use ($authUser) {
+                $q->select('employee_id')
+                    ->from('employee_project')
+                    ->whereIn('project_id', function ($sub) use ($authUser) {
+                        $sub->select('id')
+                            ->from('projects')
+                            ->where('project_manager_id', $authUser->id)
+                            ->orWhere('team_lead_id', $authUser->id);
+                    })
+                    ->whereNull('deleted_at');
+            });
+        }
 
         // Filter by employee ID
         if ($employeeId && $employeeId !== 'all') {
@@ -195,6 +108,9 @@ class AttendanceApiController extends ApiController
 
         // Fetch working hour configuration keyed by lowercase day name
         $workingHours = WorkingHour::all()->keyBy(fn($wh) => strtolower($wh->day));
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
 
         // Attendance logs
         $allLogs = AttendanceLog::whereBetween('log_date', [$startDate, $endDate])
@@ -230,13 +146,31 @@ class AttendanceApiController extends ApiController
                 $punchIn = $attendance?->punch_in;
                 $punchOut = $attendance?->punch_out;
 
+                $timezone = $attendance?->timezone ?? config('app.timezone');
+
+                $abbr = match ($timezone) {
+                    'Asia/Kolkata',
+                    'Asia/Calcutta',
+                    'IST',
+                    '+05:30',
+                    'UTC+05:30' => 'IST',
+                    'Asia/Dubai',
+                    'GST',
+                    '+04:00',
+                    'UTC+04:00' => 'GST',
+                    default => Carbon::now($timezone)->format('T'),
+                };
                 $workedHours = 0;
                 $overtimeMinutes = 0;
 
                 if ($punchIn) {
                     $status = 'Present';
                 } else {
-                    $status = 'Absent';
+                    if (in_array($date, $holidays)) {
+                        $status = 'Holiday';
+                    } else {
+                        $status = $currentDate->isSunday() ? 'Weekly Off' : 'Absent';
+                    }
                 }
 
                 if ($punchIn && $punchOut) {
@@ -264,18 +198,20 @@ class AttendanceApiController extends ApiController
                     $overtimeMinutes = max(0, (int) round(($workedHours - $standardHours) * 60));
                 }
 
+
                 $reportData[] = [
                     'employee_id' => $employee->employee_id,
                     'name' => trim($employee->first_name . ' ' . $employee->last_name),
+                    'avatar' => $employee->avatar ?? null,
                     'department' => $employee->user->department->name ?? 'N/A',
                     'designation' => $employee->user->designation->name ?? 'N/A',
                     'company' => $employee->user->company->name ?? 'N/A',
                     'date' => $date,
                     'punch_in' => $punchIn
-                        ? Carbon::parse($punchIn)->format('h:i A')
+                        ? Carbon::parse($punchIn)->format('h:i A') . ' ' . $abbr
                         : '-',
                     'punch_out' => $punchOut
-                        ? Carbon::parse($punchOut)->format('h:i A')
+                        ? Carbon::parse($punchOut)->format('h:i A') . ' ' . $abbr
                         : '-',
                     'worked_hours' => $workedHours,
                     'standard_hours' => $standardHours,
@@ -288,15 +224,42 @@ class AttendanceApiController extends ApiController
         }
 
         // Sort by latest date first
+        // usort($reportData, function ($a, $b) {
+
+        //     if ($a['date'] === $b['date']) {
+        //         return strcmp($a['employee_id'], $b['employee_id']);
+        //     }
+
+        //     return strcmp($b['date'], $a['date']);
+        // });
+// Sort by latest date, then status, then employee ID
         usort($reportData, function ($a, $b) {
 
-            if ($a['date'] === $b['date']) {
-                return strcmp($a['employee_id'], $b['employee_id']);
+            // Latest date first
+            if ($a['date'] !== $b['date']) {
+                return strcmp($b['date'], $a['date']);
             }
 
-            return strcmp($b['date'], $a['date']);
-        });
+            // Status priority
+            $statusOrder = [
+                'Full Day' => 1,
+                'Half Day' => 2,
+                'Present' => 3,
+                'Holiday' => 4,
+                'Weekly Off' => 5,
+                'Absent' => 6,
+            ];
 
+            $statusA = $statusOrder[$a['status']] ?? 99;
+            $statusB = $statusOrder[$b['status']] ?? 99;
+
+            if ($statusA !== $statusB) {
+                return $statusA <=> $statusB;
+            }
+
+            // Employee ID ascending
+            return strcmp($a['employee_id'], $b['employee_id']);
+        });
         // Pagination
         $currentPage = (int) $request->get('page', 1);
 
@@ -334,9 +297,9 @@ class AttendanceApiController extends ApiController
             ->groupBy('userid')
             ->get()
             ->keyBy('userid'); // assuming userid in AttendanceLog is employee_id (string) or user_id (int). Based on codebase, it's usually employee_id or user_id. Wait, AttendanceLog uses user_id or employee_id?
-            // In DashboardApiController: $todayLogs = AttendanceLog::whereDate('log_date', $today)... ->groupBy('userid')->get();
-            // Let's assume userid maps to user_id or employee_id. The previous code uses it.
-            // Let's key by userid to easily check.
+        // In DashboardApiController: $todayLogs = AttendanceLog::whereDate('log_date', $today)... ->groupBy('userid')->get();
+        // Let's assume userid maps to user_id or employee_id. The previous code uses it.
+        // Let's key by userid to easily check.
 
         $result = [
             'total' => ['count' => 0, 'employees' => []],
@@ -344,7 +307,14 @@ class AttendanceApiController extends ApiController
             'punched_out' => ['count' => 0, 'employees' => []],
             'absent' => ['count' => 0, 'employees' => []],
             'late' => ['count' => 0, 'employees' => []],
+            'holiday' => ['count' => 0, 'employees' => []],
         ];
+
+        $holidays = Holiday::pluck('holiday_date')
+            ->map(fn($date) => Carbon::parse($date)->toDateString())
+            ->toArray();
+
+        $isHoliday = in_array($today, $holidays);
 
         foreach ($employees as $employee) {
             // Need to know what 'userid' in AttendanceLog refers to.
@@ -381,9 +351,15 @@ class AttendanceApiController extends ApiController
                     $result['punched_out']['employees'][] = $empData;
                 }
             } else {
-                // Absent
-                $result['absent']['count']++;
-                $result['absent']['employees'][] = $empData;
+                if ($isHoliday) {
+                    // Holiday
+                    $result['holiday']['count']++;
+                    $result['holiday']['employees'][] = $empData;
+                } else {
+                    // Absent
+                    $result['absent']['count']++;
+                    $result['absent']['employees'][] = $empData;
+                }
             }
         }
 
@@ -482,13 +458,56 @@ class AttendanceApiController extends ApiController
     }
 
     /**
+     * Get punch-in/punch-out data for a specific employee on a specific date.
+     */
+    public function getPunchData(Request $request): JsonResponse
+    {
+        $request->validate([
+            'user_id' => 'required|integer|exists:users,id',
+            'date' => 'required|date',
+        ]);
+
+        $log = AttendanceLog::where('userid', $request->user_id)
+            ->whereDate('log_date', $request->date)
+            ->first();
+
+        if (!$log) {
+            return $this->error('No attendance record found for this employee on the given date.', 404);
+        }
+
+        $tz = config('app.timezone', 'Asia/Dubai');
+
+        return $this->success([
+            'user_id' => $log->userid,
+            'log_date' => Carbon::parse($log->log_date)->toDateString(),
+            'punch_in' => $log->punch_in ? Carbon::parse($log->punch_in)->setTimezone($tz)->format('h:i A') : null,
+            'punch_out' => $log->punch_out ? Carbon::parse($log->punch_out)->setTimezone($tz)->format('h:i A') : null,
+            'punch_in_location' => [
+                'latitude' => $log->punch_in_latitude,
+                'longitude' => $log->punch_in_longitude,
+                'address' => $log->punch_in_address,
+            ],
+            'punch_out_location' => [
+                'latitude' => $log->punch_out_latitude,
+                'longitude' => $log->punch_out_longitude,
+                'address' => $log->punch_out_address,
+            ],
+            'working_hours' => $log->working_hours,
+            'work_location' => $log->work_location,
+            'status' => $log->status,
+            'attendance_status' => $log->attendance_status,
+            'log_status' => $log->log_status,
+        ], 'Punch data fetched successfully.');
+    }
+
+    /**
      * Get Late Comers
      * Dynamically checks against the WorkingHour start_time per day.
      */
     public function lateComers(Request $request): JsonResponse
     {
-        $perPage  = (int) $request->get('per_page', 15);
-        $page     = (int) $request->get('page', 1);
+        $perPage = (int) $request->get('per_page', 15);
+        $page = (int) $request->get('page', 1);
         $datePreset = $request->get('date_preset', 'today');
 
         // Load working hours keyed by lowercase day name
@@ -511,16 +530,16 @@ class AttendanceApiController extends ApiController
 
         $lateComers = $allLogs->filter(function ($log) use ($workingHours) {
             $dayName = strtolower(Carbon::parse($log->log_date)->format('l')); // e.g. 'monday'
-            $config  = $workingHours->get($dayName);
+            $config = $workingHours->get($dayName);
 
             // Skip days that have no config or are disabled
             if (!$config || !$config->is_enabled || !$config->start_time) {
                 return false;
             }
 
-            $punchInTime  = Carbon::parse($log->punch_in)->format('H:i:s');
-            $configStart  = Carbon::createFromTimeString($config->start_time)->format('H:i:s');
-            $noonCutoff   = '12:00:00';
+            $punchInTime = Carbon::parse($log->punch_in)->format('H:i:s');
+            $configStart = Carbon::createFromTimeString($config->start_time)->format('H:i:s');
+            $noonCutoff = '12:00:00';
 
             // Late = punched in after the configured start time but before noon
             return $punchInTime > $configStart && $punchInTime <= $noonCutoff;
@@ -530,32 +549,32 @@ class AttendanceApiController extends ApiController
             return [
                 'id' => $employee->id,
                 'user_id' => $employee?->user_id ?? null,
-                'employee_id'  => $employee?->employee_id ?? null,
-                'name'         => $employee
+                'employee_id' => $employee?->employee_id ?? null,
+                'name' => $employee
                     ? trim($employee->first_name . ' ' . $employee->last_name)
                     : ($log->user?->name ?? 'Unknown'),
-                'department'   => $log->user?->department?->name ?? 'N/A',
-                'designation'  => $log->user?->designation?->name ?? 'N/A',
-                'company_id'   => $log->company_id,
-                'log_date'     => $log->log_date,
-                'punch_in'     => Carbon::parse($log->punch_in)->format('h:i A'),
-                'punch_out'    => $log->punch_out
+                'department' => $log->user?->department?->name ?? 'N/A',
+                'designation' => $log->user?->designation?->name ?? 'N/A',
+                'company_id' => $log->company_id,
+                'log_date' => $log->log_date,
+                'punch_in' => Carbon::parse($log->punch_in)->format('h:i A'),
+                'punch_out' => $log->punch_out
                     ? Carbon::parse($log->punch_out)->format('h:i A')
                     : '-',
             ];
         })->values();
 
         // Manual pagination
-        $total          = $lateComers->count();
+        $total = $lateComers->count();
         $paginatedItems = $lateComers->forPage($page, $perPage)->values();
 
         return $this->success([
             'data' => $paginatedItems,
             'meta' => [
-                'total'        => $total,
-                'per_page'     => $perPage,
+                'total' => $total,
+                'per_page' => $perPage,
                 'current_page' => $page,
-                'last_page'    => (int) ceil($total / $perPage),
+                'last_page' => (int) ceil($total / $perPage),
             ],
         ]);
     }

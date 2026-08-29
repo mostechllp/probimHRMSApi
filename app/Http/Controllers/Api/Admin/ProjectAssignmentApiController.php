@@ -22,13 +22,39 @@ class ProjectAssignmentApiController extends ApiController
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Employee::with(['projects.projectManager', 'projects.teamLead']);
+        $user = auth()->user();
+        $isManagerOrLead = $user && ($user->type === 'manager' || $user->type === 'team_lead');
+
+        $query = Employee::with([
+            'projects' => function ($q) use ($user, $isManagerOrLead) {
+                $q->with(['projectManager', 'teamLead']);
+                if ($isManagerOrLead) {
+                    $q->where(function ($sub) use ($user) {
+                        $sub->where('project_manager_id', $user->id)
+                            ->orWhere('team_lead_id', $user->id);
+                    });
+                }
+            }
+        ]);
 
         if ($request->filled('employee_id')) {
             $query->where('id', $request->employee_id);
         }
 
+        if ($isManagerOrLead) {
+            $query->whereHas('projects', function ($q) use ($user) {
+                $q->where('project_manager_id', $user->id)
+                    ->orWhere('team_lead_id', $user->id);
+            });
+        }
+
         $employees = $query->get();
+        return $this->success($employees);
+    }
+
+    public function getEmployees()
+    {
+        $employees = Employee::whereHas('user', fn($q) => $q->where('status', 'active')->where('type', '!=', 'admin'))->get();
         return $this->success($employees);
     }
 
@@ -37,7 +63,24 @@ class ProjectAssignmentApiController extends ApiController
      */
     public function show($id): JsonResponse
     {
-        $employee = Employee::with('projects')->find($id);
+        $user = auth()->user();
+        $isManagerOrLead = $user && ($user->type === 'manager' || $user->type === 'team_lead');
+
+        $employeeQuery = Employee::query();
+        if ($isManagerOrLead) {
+            $employeeQuery->with([
+                'projects' => function ($q) use ($user) {
+                    $q->where(function ($sub) use ($user) {
+                        $sub->where('project_manager_id', $user->id)
+                            ->orWhere('team_lead_id', $user->id);
+                    });
+                }
+            ]);
+        } else {
+            $employeeQuery->with('projects');
+        }
+
+        $employee = $employeeQuery->find($id);
 
         if (!$employee) {
             return $this->error('Employee not found', 404);
@@ -229,14 +272,14 @@ class ProjectAssignmentApiController extends ApiController
     public function monthlyProjectHours(Request $request): JsonResponse
     {
         $request->validate([
-            'date'        => 'nullable|date_format:Y-m-d',
-            'month'       => 'nullable|integer|min:1|max:12',
-            'year'        => 'nullable|integer|min:2000',
-            'project_id'  => 'nullable|exists:projects,id',
+            'date' => 'nullable|date_format:Y-m-d',
+            'month' => 'nullable|integer|min:1|max:12',
+            'year' => 'nullable|integer|min:2000',
+            'project_id' => 'nullable|exists:projects,id',
             'employee_id' => 'nullable|exists:employees,id',
         ]);
 
-        $projectId  = $request->input('project_id');
+        $projectId = $request->input('project_id');
         $employeeId = $request->input('employee_id');
 
         // ------------------------------------------------------------------
@@ -248,15 +291,15 @@ class ProjectAssignmentApiController extends ApiController
 
         if ($filterDate) {
             $dateCarbon = Carbon::parse($filterDate);
-            $month      = $dateCarbon->month;
-            $year       = $dateCarbon->year;
-            $startDate  = $dateCarbon->toDateString();
-            $endDate    = $dateCarbon->toDateString();   // same day → single-day range
+            $month = $dateCarbon->month;
+            $year = $dateCarbon->year;
+            $startDate = $dateCarbon->toDateString();
+            $endDate = $dateCarbon->toDateString();   // same day → single-day range
         } else {
-            $month     = (int) $request->input('month', Carbon::now()->month);
-            $year      = (int) $request->input('year',  Carbon::now()->year);
+            $month = (int) $request->input('month', Carbon::now()->month);
+            $year = (int) $request->input('year', Carbon::now()->year);
             $startDate = Carbon::createFromDate($year, $month, 1)->startOfMonth()->toDateString();
-            $endDate   = Carbon::createFromDate($year, $month, 1)->endOfMonth()->toDateString();
+            $endDate = Carbon::createFromDate($year, $month, 1)->endOfMonth()->toDateString();
         }
 
         // Build base query on project_time_logs for the resolved date range.
@@ -272,6 +315,14 @@ class ProjectAssignmentApiController extends ApiController
             },
         ])
             ->whereBetween('date', [$startDate, $endDate]);
+
+        $user = auth()->user();
+        if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
+            $logsQuery->whereHas('project', function ($q) use ($user) {
+                $q->where('project_manager_id', $user->id)
+                    ->orWhere('team_lead_id', $user->id);
+            });
+        }
 
         if ($projectId) {
             $logsQuery->where('project_id', $projectId);
@@ -292,21 +343,68 @@ class ProjectAssignmentApiController extends ApiController
 
         // Build the base response meta that is shared across both empty and populated responses.
         $meta = [
-            'month'  => $month,
-            'year'   => $year,
+            'month' => $month,
+            'year' => $year,
             'period' => Carbon::createFromDate($year, $month, 1)->format('F Y'),
         ];
         if ($filterDate) {
             $meta['date'] = $filterDate;
         }
 
-        if ($logs->isEmpty()) {
-            return $this->success(array_merge($meta, ['employees' => []]));
+        // ------------------------------------------------------------------
+        // Seed the result with every employee assigned to the relevant
+        // project(s) at zero hours, so employees with no time logs for the
+        // period still show up (with total_minutes/total_hours = 0) instead
+        // of being left out entirely. Real log data (below) then overwrites
+        // these zero entries wherever logs exist.
+        // ------------------------------------------------------------------
+        $scopeProjects = function ($q) use ($user, $projectId) {
+            if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
+                $q->where(function ($sub) use ($user) {
+                    $sub->where('project_manager_id', $user->id)
+                        ->orWhere('team_lead_id', $user->id);
+                });
+            }
+            if ($projectId) {
+                $q->where('projects.id', $projectId);
+            }
+        };
+
+        $assignedEmployeesQuery = Employee::withTrashed()
+            ->with(['projects' => $scopeProjects])
+            ->whereHas('projects', $scopeProjects);
+
+        if ($employeeId) {
+            $assignedEmployeesQuery->where('id', $employeeId);
+        }
+
+        $employeesByUserId = [];
+        foreach ($assignedEmployeesQuery->get() as $assignedEmployee) {
+            $projectBreakdown = $assignedEmployee->projects->map(function ($project) {
+                return [
+                    'project_id' => $project->id,
+                    'project_name' => $project->name,
+                    'total_minutes' => 0,
+                    'total_hours' => 0,
+                    'formatted' => $this->formatMinutes(0),
+                ];
+            })->values()->all();
+
+            $employeesByUserId[$assignedEmployee->user_id] = [
+                'id' => $assignedEmployee->id,
+                'user_id' => $assignedEmployee->user_id,
+                'employee_id' => $assignedEmployee->employee_id,
+                'name' => trim($assignedEmployee->first_name . ' ' . $assignedEmployee->last_name),
+                'avatar' => $assignedEmployee->avatar,
+                'total_minutes' => 0,
+                'total_hours' => 0,
+                'total_formatted' => $this->formatMinutes(0),
+                'projects' => $projectBreakdown,
+            ];
         }
 
         // Group logs by user_id then project_id
-        $grouped   = $logs->groupBy('user_id');
-        $employees = [];
+        $grouped = $logs->groupBy('user_id');
 
         foreach ($grouped as $userId => $userLogs) {
             // Resolve employee record
@@ -314,39 +412,41 @@ class ProjectAssignmentApiController extends ApiController
             $empRecord = $userModel?->employee;
 
             $projectBreakdown = [];
-            $totalMinutes     = 0;
+            $totalMinutes = 0;
 
             foreach ($userLogs->groupBy('project_id') as $projId => $projLogs) {
                 $projectModel = $projLogs->first()->project;
-                $minutes      = (int) $projLogs->sum('time_taken_minutes');
+                $minutes = (int) $projLogs->sum('time_taken_minutes');
                 $totalMinutes += $minutes;
 
                 $projectBreakdown[] = [
-                    'project_id'    => $projId,
-                    'project_name'  => $projectModel?->name ?? 'Unknown',
+                    'project_id' => $projId,
+                    'project_name' => $projectModel?->name ?? 'Unknown',
                     'total_minutes' => $minutes,
-                    'total_hours'   => round($minutes / 60, 2),
-                    'formatted'     => $this->formatMinutes($minutes),
+                    'total_hours' => round($minutes / 60, 2),
+                    'formatted' => $this->formatMinutes($minutes),
                 ];
             }
 
             // Sort projects by most time spent first
             usort($projectBreakdown, fn($a, $b) => $b['total_minutes'] <=> $a['total_minutes']);
 
-            $employees[] = [
-                'id'              => $empRecord?->id,
-                'user_id'         => $empRecord?->user_id ?? $userId,
-                'employee_id'     => $empRecord?->employee_id,
-                'name'            => $empRecord
+            $employeesByUserId[$empRecord?->user_id ?? $userId] = [
+                'id' => $empRecord?->id,
+                'user_id' => $empRecord?->user_id ?? $userId,
+                'employee_id' => $empRecord?->employee_id,
+                'name' => $empRecord
                     ? trim($empRecord->first_name . ' ' . $empRecord->last_name)
                     : ($userModel ? trim($userModel->first_name . ' ' . $userModel->last_name) : 'Unknown'),
-                'avatar'          => $empRecord?->avatar,
-                'total_minutes'   => $totalMinutes,
-                'total_hours'     => round($totalMinutes / 60, 2),
+                'avatar' => $empRecord?->avatar,
+                'total_minutes' => $totalMinutes,
+                'total_hours' => round($totalMinutes / 60, 2),
                 'total_formatted' => $this->formatMinutes($totalMinutes),
-                'projects'        => $projectBreakdown,
+                'projects' => $projectBreakdown,
             ];
         }
+
+        $employees = array_values($employeesByUserId);
 
         // Sort employees by most time spent first
         usort($employees, fn($a, $b) => $b['total_minutes'] <=> $a['total_minutes']);

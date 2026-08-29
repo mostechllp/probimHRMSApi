@@ -25,7 +25,7 @@ class EmployeeExport implements FromArray, WithHeadings, WithStyles, ShouldAutoS
 
     public function headings(): array
     {
-        return ['Employee ID', 'Name', 'Company', 'Department', 'Designation', 'Joining Date', 'Status'];
+        return ['Employee ID', 'Name', 'Department', 'Designation', 'Joining Date', 'Status'];
     }
 
     public function title(): string

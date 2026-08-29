@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\EmployeeSalaryComponent;
+use App\Models\EmployeeSalaryPackage;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -12,14 +13,18 @@ class EmployeeSalaryComponentApiController extends ApiController
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'employee_id' => 'required|integer',
-            'employee_salary_package_id' => 'required|integer',
+            'employee_id' => 'required|integer|exists:employees,id',
+            'employee_salary_package_id' => 'nullable|integer',
             'component_name' => 'required|string|max:255',
             'value' => 'required|numeric|min:0',
         ]);
 
         $component = EmployeeSalaryComponent::create($validated);
-        return $this->success($component, 'Salary component created successfully');
+
+        return $this->success(
+            $component,
+            'Salary component created successfully'
+        );
     }
 
     public function update(Request $request, $id): JsonResponse

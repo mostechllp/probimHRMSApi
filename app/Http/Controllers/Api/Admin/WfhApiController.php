@@ -20,6 +20,23 @@ class WfhApiController extends ApiController
             $query->where('status', $status);
         }
 
+        $user = auth()->user();
+        if ($user && ($user->type === 'manager' || $user->type === 'team_lead')) {
+            $employeeIds = \App\Models\Employee::whereIn('user_id', function ($q) use ($user) {
+                $q->select('employee_id')
+                    ->from('employee_project')
+                    ->whereIn('project_id', function ($subQuery) use ($user) {
+                        $subQuery->select('id')
+                            ->from('projects')
+                            ->where('project_manager_id', $user->id)
+                            ->orWhere('team_lead_id', $user->id);
+                    })
+                    ->whereNull('deleted_at');
+            })->pluck('id');
+
+            $query->whereIn('employee_id', $employeeIds);
+        }
+
         $requests = $query->paginate($perPage);
 
         return $this->success($requests);

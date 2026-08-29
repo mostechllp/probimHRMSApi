@@ -27,7 +27,16 @@ class UpdateEmployeeRequest extends FormRequest
             'labor_issued_date',
             'labor_expiry_date',
             'eid_issued_date',
-            'eid_expiry_date'
+            'eid_expiry_date',
+            'probation_start_date',
+            'probation_end_date',
+            'confirmation_date',
+            'contract_start_date',
+            'contract_end_date',
+            'notice_period_start_date',
+            'last_working_day',
+            'resignation_date',
+            'relieving_date'
         ];
 
         foreach ($dates as $field) {
@@ -92,6 +101,15 @@ class UpdateEmployeeRequest extends FormRequest
             'company_id' => 'nullable|exists:companies,id',
             'dob' => 'nullable|date',
             'joining_date' => 'nullable|date',
+            'probation_start_date' => 'nullable|date',
+            'probation_end_date' => 'nullable|date',
+            'confirmation_date' => 'nullable|date',
+            'contract_start_date' => 'nullable|date',
+            'contract_end_date' => 'nullable|date',
+            'notice_period_start_date' => 'nullable|date',
+            'last_working_day' => 'nullable|date',
+            'resignation_date' => 'nullable|date',
+            'relieving_date' => 'nullable|date',
             'gender' => 'nullable|string|max:255',
             'nationality' => 'nullable|string|max:255',
             'marital_status' => 'nullable|string|max:255',
@@ -110,17 +128,17 @@ class UpdateEmployeeRequest extends FormRequest
             'address' => 'nullable|string',
 
             // ── Document Fields (paths from uploadTemp API) ──
-            'avatar'                => 'nullable|string|starts_with:temp/',
-            'passport_1st_page'     => 'nullable|string|starts_with:temp/',
-            'passport_2nd_page'     => 'nullable|string|starts_with:temp/',
-            'passport_outer_page'   => 'nullable|string|starts_with:temp/',
-            'passport_id_page'      => 'nullable|string|starts_with:temp/',
-            'visa_page'             => 'nullable|string|starts_with:temp/',
-            'labor_card'            => 'nullable|string|starts_with:temp/',
-            'eid_1st_page'          => 'nullable|string|starts_with:temp/',
-            'eid_2nd_page'          => 'nullable|string|starts_with:temp/',
-            'educational_1st_page'  => 'nullable|string|starts_with:temp/',
-            'educational_2nd_page'  => 'nullable|string|starts_with:temp/',
+            'avatar' => 'nullable|string|starts_with:temp/',
+            'passport_1st_page' => 'nullable|string|starts_with:temp/',
+            'passport_2nd_page' => 'nullable|string|starts_with:temp/',
+            'passport_outer_page' => 'nullable|string|starts_with:temp/',
+            'passport_id_page' => 'nullable|string|starts_with:temp/',
+            'visa_page' => 'nullable|string|starts_with:temp/',
+            'labor_card' => 'nullable|string|starts_with:temp/',
+            'eid_1st_page' => 'nullable|string|starts_with:temp/',
+            'eid_2nd_page' => 'nullable|string|starts_with:temp/',
+            'educational_1st_page' => 'nullable|string|starts_with:temp/',
+            'educational_2nd_page' => 'nullable|string|starts_with:temp/',
             'home_country_id_proof' => 'nullable|string|starts_with:temp/',
 
             // Details
@@ -150,28 +168,28 @@ class UpdateEmployeeRequest extends FormRequest
             'relative_number' => 'nullable|string|max:255',
             'home_country_number' => 'nullable|string|max:255',
             'company_email' => [
-            'nullable',
-            'email',
+                'nullable',
+                'email',
                 Rule::unique('employees', 'company_email')
-                    ->whereNull('deleted_at') 
-                    ->ignore($this->employee)        
+                    ->whereNull('deleted_at')
+                    ->ignore($this->employee)
             ],
             'personal_email' => [
-            'required',
-            'email',
+                'required',
+                'email',
                 Rule::unique('employees', 'personal_email')
-                    ->whereNull('deleted_at')        
-                    ->ignore($this->employee)        
+                    ->whereNull('deleted_at')
+                    ->ignore($this->employee)
             ],
-            'status' => 'nullable|in:active,inactive,onboarding',
+            'status' => 'nullable|in:active,inactive,onboarding,offboarding,pending_onboarding',
             'total_leaves_allocated' => 'nullable|integer|min:0',
             'username' => 'nullable|string|max:255',
             'email' => [
-            'nullable',
-            'email',
+                'nullable',
+                'email',
                 Rule::unique('users', 'email')
-                    ->whereNull('deleted_at')    
-                    ->ignore($this->user?->id)     
+                    ->whereNull('deleted_at')
+                    ->ignore($this->user?->id)
             ],
             'type' => 'required|in:admin,employee,hr,team_lead,manager',
             'role_id' => 'required',

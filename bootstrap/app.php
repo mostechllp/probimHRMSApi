@@ -8,9 +8,9 @@ use App\Http\Middleware\EnsureEmployeeAuthenticated;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
-        web: __DIR__.'/../routes/web.php',
-        api: __DIR__.'/../routes/api.php',
-        commands: __DIR__.'/../routes/console.php',
+        web: __DIR__ . '/../routes/web.php',
+        api: __DIR__ . '/../routes/api.php',
+        commands: __DIR__ . '/../routes/console.php',
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
@@ -21,6 +21,17 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withSchedule(function (\Illuminate\Console\Scheduling\Schedule $schedule) {
         $schedule->command('documents:check-expiry')->daily();
+        $schedule->command('hr:check-probation-contract')->daily();
+        $schedule->command('hr:check-special-days')->dailyAt('08:00');
+
+        // Auto-generate payroll for all active employees for the previous month
+        // Runs at 00:05 on the 1st of every month
+        $schedule->command('payroll:generate-monthly')->monthlyOn(1, '00:05');
+        // $schedule->command('payroll:generate-monthly')->everyMinute();
+
+        // Remind employees who haven't punched in once 1 hour has passed
+        // since their scheduled working-hour start time.
+        $schedule->command('attendance:send-punchin-reminders')->everyMinute();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Illuminate\Validation\ValidationException $e, $request) {

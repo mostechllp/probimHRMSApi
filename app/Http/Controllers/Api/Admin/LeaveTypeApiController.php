@@ -15,6 +15,12 @@ class LeaveTypeApiController extends ApiController
         return $this->success($leaveTypes);
     }
 
+    public function getAllLeaveTypes(): JsonResponse
+    {
+        $leaveTypes = LeaveType::where('status', true)->get();
+        return $this->success($leaveTypes);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $request->validate([

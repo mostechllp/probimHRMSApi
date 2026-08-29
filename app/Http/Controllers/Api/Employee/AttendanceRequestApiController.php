@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api\Employee;
 
 use App\Http\Controllers\Api\ApiController;
+use App\Mail\RequestNotificationMail;
 use App\Models\AttendanceRequest;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Mail;
 use Carbon\Carbon;
 
 class AttendanceRequestApiController extends ApiController
@@ -24,6 +27,30 @@ class AttendanceRequestApiController extends ApiController
             ->latest()
             ->get();
 
+        $requests->transform(function ($request) {
+            $timezone = $request->timezone ?? 'Asia/Dubai';
+
+            $tzAbbreviation = match ($timezone) {
+                'Asia/Kolkata',
+                'Asia/Calcutta',
+                'IST',
+                '+05:30',
+                'UTC+05:30' => 'IST',
+                'Asia/Dubai',
+                'GST',
+                '+04:00',
+                'UTC+04:00' => 'GST',
+                default => Carbon::now($timezone)->format('T'),
+            };
+
+            $request->request_time = $request->request_time
+                ? Carbon::createFromFormat('H:i:s', $request->request_time)
+                    ->format('h:i A') . " {$tzAbbreviation}"
+                : '--';
+
+            return $request;
+        });
+
         return $this->success($requests);
     }
 
@@ -34,9 +61,10 @@ class AttendanceRequestApiController extends ApiController
     {
         $request->validate([
             'type' => 'required|string|in:early_check_in,late_check_in,missed_punch_in,missed_punch_out',
-            'request_date' => 'required|date', // Expecting Y-m-d from API
-            'request_time' => 'required|date_format:H:i',
+            'request_date' => 'required|date',
+            'request_time' => 'required',
             'reason' => 'required|string|max:1000',
+            'timezone' => 'nullable|string',
         ]);
 
         $employee = auth()->user()->employee;
@@ -47,15 +75,96 @@ class AttendanceRequestApiController extends ApiController
         // Check if date needs conversion if it's not Y-m-d, but usually API should send Y-m-d
         $date = $request->request_date;
 
+        $existingRequest = AttendanceRequest::where('employee_id', $employee->id)
+            ->where('request_date', $date)
+            ->where('type', $request->type)
+            ->first();
+
+        if ($existingRequest) {
+            return $this->error('You have already submitted a request for this date.', 400);
+        }
+
         $attendanceRequest = AttendanceRequest::create([
             'employee_id' => $employee->id,
             'type' => $request->type,
             'request_date' => $date,
             'request_time' => $request->request_time,
             'reason' => $request->reason,
-            'status' => 'pending',
+            'timezone' => $request->timezone,
+            'status' => 'pending'
         ]);
 
+        $this->notifyHrAdmins('Attendance Request', 'created', $attendanceRequest);
+
         return $this->success($attendanceRequest, 'Attendance request submitted successfully.', 201);
+    }
+
+    public function update(Request $request, AttendanceRequest $attendanceRequest): JsonResponse
+    {
+        $request->validate([
+            'request_date' => 'required|date',
+            'request_time' => 'required',
+            'reason' => 'required|string',
+            'timezone' => 'nullable|string',
+            'type' => 'required|string'
+        ]);
+
+        $exists = AttendanceRequest::where('employee_id', $attendanceRequest->employee_id)
+            ->where('request_date', $request->request_date)
+            ->where('type', $request->type)
+            ->where('id', '!=', $attendanceRequest->id)
+            ->exists();
+
+        if ($exists) {
+            return $this->error(
+                'An attendance request already exists for this date and type.',
+                422
+            );
+        }
+
+        $attendanceRequest->update([
+            'request_date' => $request->request_date,
+            'request_time' => $request->request_time,
+            'reason' => $request->reason,
+        ]);
+
+        $this->notifyHrAdmins('Attendance Request', 'updated', $attendanceRequest);
+
+        return $this->success($attendanceRequest, 'Attendance request updated successfully.');
+    }
+
+    public function show(AttendanceRequest $attendanceRequest): JsonResponse
+    {
+        $attendanceRequest->load('employee');
+
+        return $this->success($attendanceRequest);
+    }
+
+    /**
+     * Remove the attendance request.
+     */
+    public function destroy(AttendanceRequest $attendanceRequest): JsonResponse
+    {
+        $attendanceRequest->delete();
+        return $this->success(null, 'Attendance request deleted successfully.');
+    }
+
+    /**
+     * Send an email notification to all HR and Admin users.
+     */
+    private function notifyHrAdmins(string $requestType, string $action, $requestModel): void
+    {
+        try {
+            $hrAdmins = User::whereIn('type', ['hr', 'admin'])
+                ->whereNotNull('email')
+                ->get();
+
+            foreach ($hrAdmins as $recipient) {
+                Mail::to($recipient->email)
+                    ->send(new RequestNotificationMail($requestType, $action, $requestModel));
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('RequestNotificationMail failed: ' . $e->getMessage());
+        }
     }
 }

@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\View;
+use App\Models\LeaveRequest;
+use App\Observers\LeaveRequestObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -26,5 +28,7 @@ class AppServiceProvider extends ServiceProvider
             $notifications = auth()->check() ? auth()->user()->unreadNotifications : collect();
             $view->with('notifications', $notifications);
         });
+
+        LeaveRequest::observe(LeaveRequestObserver::class);
     }
 }

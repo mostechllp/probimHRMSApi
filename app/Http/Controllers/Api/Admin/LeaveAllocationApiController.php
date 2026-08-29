@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ApiController;
 use App\Models\Employee;
 use App\Models\LeaveType;
 use App\Models\LeaveAllocation;
+use App\Models\LeaveRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -17,10 +18,20 @@ class LeaveAllocationApiController extends ApiController
     public function index(): JsonResponse
     {
         $leaveTypes = LeaveType::where('status', true)->get();
-        
-        $employees = Employee::with(['user.designation', 'user.department', 'user.company', 'leaveAllocations' => function($q) {
-            $q->where('year', date('Y'));
-        }])->get();
+
+        $employees = Employee::with([
+            'user.designation',
+            'user.department',
+            'user.company',
+            'leaveAllocations' => function ($q) {
+                $q->where('year', date('Y'));
+            }
+        ])
+            ->whereHas('user', function ($q) {
+                $q->where('type', '!=', 'admin')
+                    ->where('status', 'active');
+            })
+            ->get();
 
         $employeeData = $employees->map(function ($employee) use ($leaveTypes) {
             $allocations = [];
@@ -55,16 +66,50 @@ class LeaveAllocationApiController extends ApiController
      */
     public function show(Employee $employee): JsonResponse
     {
+        $employee->load([
+            'user.department',
+            'user.designation'
+        ]);
+
         $leaveTypes = LeaveType::where('status', true)->get();
+
         $allocations = LeaveAllocation::where('employee_id', $employee->id)
             ->where('year', date('Y'))
             ->get()
             ->keyBy('leave_type_id');
 
+        $totalAllocated = $allocations->sum('allocated_days');
+
+        $totalLeavesTaken = LeaveRequest::where('employee_id', $employee->id)
+            ->where('status', 'approved')
+            ->sum('duration_days');
+
+        $totalLeaveBalance = $totalAllocated - $totalLeavesTaken;
+
+        $leaveTypesBalance = $leaveTypes->map(function ($leaveType) use ($employee, $allocations) {
+
+            $allocated = $allocations[$leaveType->id]->allocated_days ?? 0;
+
+            $taken = LeaveRequest::where('employee_id', $employee->id)
+                ->where('leave_type_id', $leaveType->id)
+                ->where('status', 'approved')
+                ->sum('duration_days');
+
+            return [
+                'leave_type_id' => $leaveType->id,
+                'leave_type' => $leaveType->name,
+                'allocated' => $allocated,
+                'taken' => $taken,
+                'balance' => $allocated - $taken,
+            ];
+        });
+
         return $this->success([
             'employee' => $employee,
-            'leave_types' => $leaveTypes,
-            'allocations' => $allocations
+            'leaveTypesBalance' => $leaveTypesBalance,
+            'leave_balance' => $totalLeaveBalance,
+            'leaves_taken' => $totalLeavesTaken,
+            'leaves_allocated' => $totalAllocated
         ]);
     }
 
