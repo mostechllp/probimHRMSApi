@@ -28,10 +28,16 @@ return Application::configure(basePath: dirname(__DIR__))
         // Runs at 00:05 on the 1st of every month
         $schedule->command('payroll:generate-monthly')->monthlyOn(1, '00:05');
         // $schedule->command('payroll:generate-monthly')->everyMinute();
-
+    
         // Remind employees who haven't punched in once 1 hour has passed
         // since their scheduled working-hour start time.
-        $schedule->command('attendance:send-punchin-reminders')->everyMinute();
+        $schedule->command('attendance:send-punchin-reminders')
+            ->dailyAt('10:16')
+            ->timezone('Asia/Kolkata');
+
+        $schedule->command('attendance:send-punchin-reminders')
+            ->dailyAt('09:06')
+            ->timezone('Asia/Dubai');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Illuminate\Validation\ValidationException $e, $request) {

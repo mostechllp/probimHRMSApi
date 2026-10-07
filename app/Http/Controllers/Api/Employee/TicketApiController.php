@@ -7,6 +7,8 @@ use App\Models\Module;
 use App\Models\Ticket;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use App\Mail\TicketRaisedMail;
+use Illuminate\Support\Facades\Mail;
 
 class TicketApiController extends ApiController
 {
@@ -115,6 +117,13 @@ class TicketApiController extends ApiController
             'priority' => $request->priority ?? 'medium',
             'status' => 'open',
         ]);
+
+        if ($ticket) {
+
+            // Send email to HR/Admin
+            Mail::to('web@mostech.ae')
+                ->send(new TicketRaisedMail($ticket->load('module')));
+        }
 
         return $this->success($ticket->load('module'), 'Ticket raised successfully.', 201);
     }

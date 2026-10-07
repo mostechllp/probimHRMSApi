@@ -55,6 +55,8 @@ class AttendanceRequestApiController extends ApiController
                 'GST',
                 '+04:00',
                 'UTC+04:00' => 'GST',
+                'Asia/Riyadh',
+                '+03:00', => 'AST',
                 default => Carbon::now($timezone)->format('T'),
             };
 
@@ -164,6 +166,13 @@ class AttendanceRequestApiController extends ApiController
                 $log->punch_in_address   = $location['address']   ?? null;
                 $log->timezone   = $attendanceRequest->timezone   ?? null;
                 $log->work_location   = $attendanceRequest->work_location   ?? null;
+            }else if($attendanceRequest->created_by === 'employee'){
+                $location = $attendanceRequest->location ?? [];
+                $log->punch_in_latitude  = $location['latitude']  ?? null;
+                $log->punch_in_longitude = $location['longitude'] ?? null;
+                $log->punch_in_address   = $location['address']   ?? null;
+                $log->timezone   = $attendanceRequest->timezone   ?? null;
+                $log->work_location   = $location['work_location']   ?? null;
             }
 
             // Optionally set punch-out if provided

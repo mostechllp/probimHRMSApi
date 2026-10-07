@@ -49,7 +49,7 @@ class AttendanceApiController extends ApiController
         ])
             ->whereHas('user', function ($query) {
                 $query->where('status', 'active')
-                    ->where('type', '!=','admin');
+                    ->where('type', '!=', 'admin');
             });
 
         // If the logged-in user is a manager or team lead,
@@ -482,6 +482,8 @@ class AttendanceApiController extends ApiController
             'log_date' => Carbon::parse($log->log_date)->toDateString(),
             'punch_in' => $log->punch_in ? Carbon::parse($log->punch_in)->setTimezone($tz)->format('h:i A') : null,
             'punch_out' => $log->punch_out ? Carbon::parse($log->punch_out)->setTimezone($tz)->format('h:i A') : null,
+            'raw_punch_in' => $log->punch_in,
+            'raw_punch_out' => $log->punch_out,
             'punch_in_location' => [
                 'latitude' => $log->punch_in_latitude,
                 'longitude' => $log->punch_in_longitude,

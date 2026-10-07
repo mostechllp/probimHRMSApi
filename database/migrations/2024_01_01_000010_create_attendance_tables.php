@@ -45,6 +45,8 @@ return new class extends Migration
             $table->string('type');                    // punch_in / punch_out / correction
             $table->date('request_date');
             $table->time('request_time');
+            $table->time('punch_in_time');
+            $table->time('punch_out_time');
             $table->text('reason');
             $table->string('status')->default('pending'); // pending / approved / rejected
             $table->timestamps();

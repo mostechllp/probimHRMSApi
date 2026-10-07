@@ -49,7 +49,7 @@ class EmployeePortalApiController extends ApiController
         // Attendance stats for today
         $attendance = AttendanceLog::where('userid', $user->id)
             ->whereDate('log_date', $today)
-            ->select('id', 'punch_in', 'punch_out', 'punch_in_latitude', 'punch_in_longitude', 'punch_in_address', 'punch_out_latitude', 'punch_out_longitude', 'punch_out_address', 'working_hours')
+            ->select('id', 'punch_in', 'punch_out', 'punch_in_latitude', 'punch_in_longitude', 'punch_in_address', 'punch_out_latitude', 'punch_out_longitude', 'punch_out_address', 'working_hours', 'timezone')
             ->first();
 
         // ↓ Store raw punch_out status BEFORE formatting
@@ -58,12 +58,12 @@ class EmployeePortalApiController extends ApiController
         $isOnBreak = false;
         $totalBreakMinutes = 0;
         $breaksList = [];
-        $tz = config('app.timezone', 'Asia/Dubai');
+        $tz = $attendance->timezone ?? config('app.timezone', 'Asia/Dubai');
 
         if ($attendance) {
-            $attendance->punch_in = $attendance->punch_in
-                ? Carbon::parse($attendance->punch_in)->setTimezone($tz)->format('h:i A')
-                : '--';
+            // $attendance->punch_in = $attendance->punch_in
+            //     ? Carbon::parse($attendance->punch_in)->setTimezone($tz)->format('h:i A')
+            //     : '--';
 
             $attendance->punch_out = $attendance->punch_out
                 ? Carbon::parse($attendance->punch_out)->setTimezone($tz)->format('h:i A')
@@ -190,7 +190,7 @@ class EmployeePortalApiController extends ApiController
                         'id' => $projectManager->id,
                         'name' => trim(
                             $projectManager->first_name . ' ' .
-                            $projectManager->last_name
+                                $projectManager->last_name
                         ),
                         'department' => $projectManager->user?->department?->name,
                         'designation' => $projectManager->user?->designation?->name,
@@ -200,7 +200,7 @@ class EmployeePortalApiController extends ApiController
                         'id' => $teamLead->id,
                         'name' => trim(
                             $teamLead->first_name . ' ' .
-                            $teamLead->last_name
+                                $teamLead->last_name
                         ),
                         'department' => $teamLead->user?->department?->name,
                         'designation' => $teamLead->user?->designation?->name,
@@ -349,7 +349,8 @@ class EmployeePortalApiController extends ApiController
             return $this->error("You have a pending punch-out for {$missingPunchOut->log_date}. Please complete your project timings and punch out for that day first.", 403);
         }
 
-        $timezone = $request->input('timezone', config('app.timezone'));
+        // $timezone = $request->input('timezone', config('app.timezone'));
+        $timezone = $request->input('timezone', config('app.timezone', 'Asia/Dubai'));
         session(['employee_timezone' => $timezone]);
 
         $now = Carbon::now($timezone);
@@ -447,7 +448,7 @@ class EmployeePortalApiController extends ApiController
 
                         return $this->error(
                             "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
-                            "A late check-in request has been sent to HR for approval.",
+                                "A late check-in request has been sent to HR for approval.",
                             403
                         );
                     }
@@ -455,7 +456,7 @@ class EmployeePortalApiController extends ApiController
                     // Pending request exists — just inform the employee to wait
                     return $this->error(
                         "Punch-in blocked: you are {$lateDuration} late (scheduled start: {$scheduledStartFormatted}). " .
-                        "Your late check-in request is pending HR approval. Please wait.",
+                            "Your late check-in request is pending HR approval. Please wait.",
                         403
                     );
                 }
@@ -488,6 +489,7 @@ class EmployeePortalApiController extends ApiController
             'punch_out_latitude' => 'nullable|numeric',
             'punch_out_longitude' => 'nullable|numeric',
             'punch_out_address' => 'nullable|string',
+            'punch_out_date' => 'nullable|date',
             'project_times' => 'nullable|array',
             'project_times.*.project_id' => 'required|exists:projects,id',
             'project_times.*.time_minutes' => 'required|integer|min:0',
@@ -573,7 +575,7 @@ class EmployeePortalApiController extends ApiController
         // $totalMinutes = $punchIn->diffInMinutes($now);
         // $workingHours = max(0, $totalMinutes);
 
-        $totalMinutes = floor($punchIn->diffInSeconds($now) / 60);
+        $totalMinutes = round($punchIn->diffInSeconds($now) / 60);
         $workingHours = max(0, $totalMinutes);
 
 
@@ -612,10 +614,10 @@ class EmployeePortalApiController extends ApiController
             'employee_id' => 'required|exists:employees,id',
             'type' => 'required|string|in:early_check_in,late_check_in,missed_punch_in,missed_punch_out',
             'request_date' => 'required|date',
-            'request_time' => 'nullable|date_format:H:i:s',
+            'request_time' => 'nullable|date',
             'reason' => 'required|string|max:1000',
             'status' => 'nullable|in:pending,approved,rejected',
-            'timezone' => 'nullable|string',
+            'timezone' => 'nullable|string|timezone',
             'location' => 'nullable',
             'work_location' => 'nullable',
             'created_by' => 'nullable|string|in:employee,admin',
@@ -628,17 +630,26 @@ class EmployeePortalApiController extends ApiController
             return $this->error('Employee profile not found', 404);
         }
 
-        $timezone = $request->input('timezone', config('app.timezone'));
-        $date = $request->request_date;
+        $timezone = $request->input(
+            'timezone',
+            config('app.timezone')
+        );
+
+        // Parse the ISO timestamp including its +03:00 offset
+        $requestTime = Carbon::parse($request->request_time)
+            ->setTimezone($timezone);
+
+        $convertedDate = $requestTime->format('Y-m-d');
+        $convertedTime = $requestTime->format('H:i:s');
 
         $existingRequest = AttendanceRequest::where('employee_id', $employee->id)
-            ->where('request_date', $date)
+            ->where('request_date', $convertedDate)
             ->where('type', 'late_check_in')
             ->first();
 
         if ($existingRequest) {
             return $this->error(
-                'You have already submitted a missed punch request for this date.',
+                'You have already submitted a late check-in request for this date.',
                 400
             );
         }
@@ -646,19 +657,19 @@ class EmployeePortalApiController extends ApiController
         $attendanceRequest = AttendanceRequest::create([
             'employee_id' => $employee->id,
             'type' => 'late_check_in',
-            'request_date' => $request->request_date,
-            'request_time' => $request->request_time,
+            'request_date' => $convertedDate,
+            'request_time' => $convertedTime,
             'reason' => $request->reason,
-            'status' => 'pending',
+            'status' => $request->input('status', 'pending'),
             'timezone' => $timezone,
-            'created_by' => 'admin',
+            'created_by' => $request->input('created_by', 'admin'),
             'location' => $request->location,
-            'work_location' => $request->work_location
+            'work_location' => $request->work_location,
         ]);
 
         return $this->success(
             $attendanceRequest,
-            'Late check-in block request has been submitted successfully.',
+            'Late check-in request has been submitted successfully.',
             201
         );
     }
@@ -707,6 +718,8 @@ class EmployeePortalApiController extends ApiController
             'status' => 'pending',
             'timezone' => $timezone,
             'created_by' => 'employee',
+            'location' => $request->location,
+            'work_location' => $request->work_location,
             'project_times' => $request->project_times,
             'punch_in_time' => $request->punch_in_time,
             'punch_out_time' => $request->punch_out_time

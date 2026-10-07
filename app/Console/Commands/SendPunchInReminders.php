@@ -38,7 +38,7 @@ class SendPunchInReminders extends Command
 
     public function handle(): int
     {
-        $timezone = config('app.timezone');
+        $timezone = 'Asia/Dubai';
         $now = Carbon::now($timezone);
         $today = $now->toDateString();
         $dayName = $now->format('l');
@@ -48,7 +48,7 @@ class SendPunchInReminders extends Command
             ->first();
 
         if (!$workingHour || empty($workingHour->start_time)) {
-                Log::info('Punch-in reminder: outside reminder window');
+            Log::info('Punch-in reminder: outside reminder window');
             $this->info("No working hours configured for {$dayName}. Nothing to do.");
             return self::SUCCESS;
         }
@@ -63,7 +63,7 @@ class SendPunchInReminders extends Command
         $windowEnd = $windowStart->copy()->addMinutes(self::WINDOW_MINUTES);
 
         $nowIndia = Carbon::now('Asia/Kolkata');
-        $indiaWindowStart = Carbon::createFromTime(10, 30, 0, 'Asia/Kolkata');
+        $indiaWindowStart = Carbon::createFromTime(10, 15, 0, 'Asia/Kolkata');
         $indiaWindowEnd = $indiaWindowStart->copy()->addMinutes(self::WINDOW_MINUTES);
 
         $nowDubai = Carbon::now('Asia/Dubai');
@@ -105,8 +105,10 @@ class SendPunchInReminders extends Command
             $isIndia = $employee->currency === 'INR';
             $isDubai = $employee->currency === 'AED';
 
-            if ($isIndia) return $indiaInWindow;
-            if ($isDubai) return $dubaiInWindow;
+            if ($isIndia)
+                return $indiaInWindow;
+            if ($isDubai)
+                return $dubaiInWindow;
             return $defaultInWindow;
         });
 
