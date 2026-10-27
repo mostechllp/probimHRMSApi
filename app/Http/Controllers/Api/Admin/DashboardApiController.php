@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Employee;
 use App\Models\AttendanceLog;
+use App\Models\Holiday;
 use App\Models\Document;
 use App\Models\User;
 use App\Models\Party;
@@ -38,8 +39,8 @@ class DashboardApiController extends ApiController
 
         // 1. TODAY'S STATUS
         $todayLogs = AttendanceLog::whereDate('log_date', $today)
-            ->select('userid', DB::raw('MIN(punch_in) as punch_in'))
-            ->groupBy('userid')
+            ->select('userid', DB::raw('MIN(punch_in) as punch_in'), 'timezone')
+            ->groupBy('userid', 'timezone')
             ->get();
 
         $punchedInToday = $todayLogs->filter(function ($log) {
@@ -53,7 +54,17 @@ class DashboardApiController extends ApiController
 
         $lateCount = $punchedInToday->filter(function ($log) {
             $time = Carbon::parse($log->punch_in)->format('H:i:s');
-            return $time >= '08:11:00';
+            $timezone = $log->timezone ?? null;
+
+            if ($timezone === 'Asia/Kolkata') {
+                $lateAfter = '10:30:00';
+            } elseif ($timezone === 'Asia/Dubai') {
+                $lateAfter = '09:00:00';
+            } else {
+                $lateAfter = '09:00:00'; // Default threshold
+            }
+
+            return $time > $lateAfter;
         })->count();
 
         $wfhCount = WfhRequest::where('status', 'approved')
@@ -66,7 +77,30 @@ class DashboardApiController extends ApiController
             ->count();
 
         $presentTotal = $punchedInToday->count();
-        $absentCount = max(0, $activeEmployeesCount - ($presentTotal + $wfhCount + $leaveCount));
+        $todayDate = Carbon::today();
+
+        // Check whether today is Sunday
+        $isWeekend = $todayDate->isSunday();
+
+        // Check whether today is a public holiday
+        $isPublicHoliday = Holiday::whereDate('holiday_date', $today)->exists();
+
+        // Do not count employees as absent on Sundays or public holidays
+        if ($isWeekend || $isPublicHoliday) {
+            if ($presentTotal > 0) {
+                $absentCount = max(
+                    0,
+                    $activeEmployeesCount - ($presentTotal + $wfhCount + $leaveCount)
+                );
+            } else {
+                $absentCount = 0;
+            }
+        } else {
+            $absentCount = max(
+                0,
+                $activeEmployeesCount - ($presentTotal + $wfhCount + $leaveCount)
+            );
+        }
 
         $todayStatus = [
             "On time" => $onTimeCount,
@@ -75,6 +109,7 @@ class DashboardApiController extends ApiController
             "WFH" => $wfhCount,
             "Leave" => $leaveCount,
             "punched_in" => $presentTotal,
+            "total_employees" => $activeEmployeesCount,
         ];
 
         // 2. AVERAGE PUNCH-IN TIME
@@ -171,12 +206,15 @@ class DashboardApiController extends ApiController
             // Set late threshold based on timezone
             if ($timezone === 'Asia/Kolkata') {
                 $lateAfter = '10:30:00';
+                $timezoneLabel = 'IST';
             } elseif ($timezone === 'Asia/Dubai') {
                 $lateAfter = '09:00:00';
+                $timezoneLabel = 'GST';
             } else {
-                // Default threshold
                 $lateAfter = '09:00:00';
+                $timezoneLabel = $timezone ?? '';
             }
+
 
             $status = $time > $lateAfter ? 'late' : 'on_time';
 
@@ -191,7 +229,7 @@ class DashboardApiController extends ApiController
 
             return [
                 "name" => $name,
-                "time" => $punchIn->format('H:i A'),
+                "time" => $punchIn->format('h:i A') . ($timezoneLabel ? ' ' . $timezoneLabel : ''),
                 "status" => $status
             ];
         })->toArray();
@@ -234,8 +272,20 @@ class DashboardApiController extends ApiController
         // 5. PROJECT STATS
         $totalProjects = Project::count();
         $activeProjects = $totalProjects; // Assuming all projects are active
-        $totalAssignments = DB::table('employee_project')->whereNull('deleted_at')->count();
-        $employeesAssigned = DB::table('employee_project')->whereNull('deleted_at')->distinct('employee_id')->count('employee_id');
+        $totalAssignments = DB::table('employee_project')
+            ->join('employees', 'employees.id', '=', 'employee_project.employee_id')
+            ->join('users', 'users.id', '=', 'employees.user_id')
+            ->whereNull('employee_project.deleted_at')
+            ->where('users.status', 'active')
+            ->count();
+
+        $employeesAssigned = DB::table('employee_project')
+            ->join('employees', 'employees.id', '=', 'employee_project.employee_id')
+            ->join('users', 'users.id', '=', 'employees.user_id')
+            ->whereNull('employee_project.deleted_at')
+            ->where('users.status', 'active')
+            ->distinct()
+            ->count('employee_project.employee_id');
 
         $projectStats = [
             "total_projects" => $totalProjects,

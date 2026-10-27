@@ -184,11 +184,9 @@ class AttendanceApiController extends ApiController
                     if ($workedHours >= 8) {
 
                         $status = 'Full Day';
-
                     } elseif ($workedHours >= 4) {
 
                         $status = 'Half Day';
-
                     } else {
 
                         $status = 'Absent';
@@ -232,7 +230,7 @@ class AttendanceApiController extends ApiController
 
         //     return strcmp($b['date'], $a['date']);
         // });
-// Sort by latest date, then status, then employee ID
+        // Sort by latest date, then status, then employee ID
         usort($reportData, function ($a, $b) {
 
             // Latest date first
@@ -293,8 +291,8 @@ class AttendanceApiController extends ApiController
 
         // Get today's attendance logs
         $todayLogs = AttendanceLog::whereDate('log_date', $today)
-            ->select('userid', DB::raw('MIN(punch_in) as punch_in'), DB::raw('MAX(punch_out) as punch_out'))
-            ->groupBy('userid')
+            ->select('userid', DB::raw('MIN(punch_in) as punch_in'), DB::raw('MAX(punch_out) as punch_out'), 'timezone')
+            ->groupBy('userid', 'timezone')
             ->get()
             ->keyBy('userid'); // assuming userid in AttendanceLog is employee_id (string) or user_id (int). Based on codebase, it's usually employee_id or user_id. Wait, AttendanceLog uses user_id or employee_id?
         // In DashboardApiController: $todayLogs = AttendanceLog::whereDate('log_date', $today)... ->groupBy('userid')->get();
@@ -336,17 +334,36 @@ class AttendanceApiController extends ApiController
             $result['total']['employees'][] = $empData;
 
             if ($log && $log->punch_in) {
+
                 // Punched in
                 $result['punched_in']['count']++;
                 $result['punched_in']['employees'][] = $empData;
 
                 $punchInTime = Carbon::parse($log->punch_in)->format('H:i:s');
-                if ($punchInTime >= '08:11:00' && $punchInTime <= '12:00:00') {
+
+                // Get employee timezone
+                $timezone = $log->timezone ?? null;
+
+                // Set late threshold based on timezone
+                if ($timezone === 'Asia/Kolkata') {
+                    $lateAfter = '10:30:00';
+                } elseif ($timezone === 'Asia/Dubai') {
+                    $lateAfter = '09:00:00';
+                } else {
+                    $lateAfter = '09:00:00'; // Default threshold
+                }
+
+                // Check late arrival
+                if ($punchInTime > $lateAfter) {
                     $result['late']['count']++;
                     $result['late']['employees'][] = $empData;
                 }
 
-                if ($log->punch_out && Carbon::parse($log->punch_out)->format('H:i:s') >= '12:00:00') {
+                // Punched out
+                if (
+                    $log->punch_out &&
+                    Carbon::parse($log->punch_out)->format('H:i:s') >= '12:00:00'
+                ) {
                     $result['punched_out']['count']++;
                     $result['punched_out']['employees'][] = $empData;
                 }

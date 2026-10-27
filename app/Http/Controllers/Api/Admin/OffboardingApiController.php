@@ -1037,17 +1037,17 @@ class OffboardingApiController extends ApiController
         $conversionDetails = [];
 
         $grossSalary = $packagesForSalary->reduce(function ($carry, $package) use (&$conversionDetails) {
-            $currency  = strtoupper(trim($package->currency ?? 'AED'));
-            $rate      = $this->toAedRate($currency);
-            $rawTotal  = $package->salaryComponents->sum(fn($c) => (float) $c->value);
-            $aedTotal  = round($rawTotal * $rate, 2);
+            $currency = strtoupper(trim($package->currency ?? 'AED'));
+            $rate = $this->toAedRate($currency);
+            $rawTotal = $package->salaryComponents->sum(fn($c) => (float) $c->value);
+            $aedTotal = round($rawTotal * $rate, 2);
 
             $conversionDetails[$package->id] = [
-                'package_name'    => $package->name,
+                'package_name' => $package->name,
                 'original_currency' => $currency,
                 'exchange_rate_to_aed' => $rate,
-                'gross_in_original'   => round($rawTotal, 2),
-                'gross_in_aed'        => $aedTotal,
+                'gross_in_original' => round($rawTotal, 2),
+                'gross_in_aed' => $aedTotal,
             ];
 
             return $carry + $aedTotal;
@@ -1055,7 +1055,7 @@ class OffboardingApiController extends ApiController
 
         $basicSalary = $packagesForSalary->reduce(function ($carry, $package) {
             $currency = strtoupper(trim($package->currency ?? 'AED'));
-            $rate     = $this->toAedRate($currency);
+            $rate = $this->toAedRate($currency);
             $basicComponent = $package->salaryComponents->first(
                 fn($component) => stripos($component->component_name, 'basic') !== false
             );
@@ -1167,10 +1167,10 @@ class OffboardingApiController extends ApiController
                     'last_working_day' => $offboarding->last_working_day,
                 ],
                 'salary' => [
-                    'basic_salary'   => round($basicSalary, 2),
-                    'gross_salary'   => round($grossSalary, 2),
+                    'basic_salary' => round($basicSalary, 2),
+                    'gross_salary' => round($grossSalary, 2),
                     'per_day_salary' => round($perDaySalary, 2),
-                    'currency'       => 'AED',
+                    'currency' => 'AED',
                     'currency_conversion' => array_values($conversionDetails),
                 ],
                 'service_period' => $servicePeriod,
@@ -2077,7 +2077,7 @@ class OffboardingApiController extends ApiController
      */
     private function isAuthorized($user, $employee): bool
     {
-        if ($user->type === 'admin' || $user->role?->name === 'HR Manager') {
+        if ($user->type === 'admin' || $user->type === 'hr' || $user->type === 'manager') {
             return true;
         }
 
@@ -2093,22 +2093,22 @@ class OffboardingApiController extends ApiController
     private function toAedRate(string $currency): float
     {
         return match (strtoupper(trim($currency))) {
-            'AED'  => 1.0,
-            'USD'  => 3.6725,   // 1 USD = 3.6725 AED (fixed peg)
-            'INR'  => 0.04375,  // approx 1 INR = 0.04375 AED
-            'EUR'  => 3.97,     // approx
-            'GBP'  => 4.63,     // approx
-            'SAR'  => 0.98,     // approx
-            'QAR'  => 1.01,     // approx
-            'KWD'  => 12.02,    // approx
-            'BHD'  => 9.75,     // approx
-            'OMR'  => 9.54,     // approx
-            'PKR'  => 0.013,    // approx
-            'NPR'  => 0.028,    // approx
-            'EGP'  => 0.075,    // approx
-            'PHP'  => 0.064,    // approx
-            'LKR'  => 0.011,    // approx
-            'BDT'  => 0.033,    // approx
+            'AED' => 1.0,
+            'USD' => 3.6725,   // 1 USD = 3.6725 AED (fixed peg)
+            'INR' => 0.04375,  // approx 1 INR = 0.04375 AED
+            'EUR' => 3.97,     // approx
+            'GBP' => 4.63,     // approx
+            'SAR' => 0.98,     // approx
+            'QAR' => 1.01,     // approx
+            'KWD' => 12.02,    // approx
+            'BHD' => 9.75,     // approx
+            'OMR' => 9.54,     // approx
+            'PKR' => 0.013,    // approx
+            'NPR' => 0.028,    // approx
+            'EGP' => 0.075,    // approx
+            'PHP' => 0.064,    // approx
+            'LKR' => 0.011,    // approx
+            'BDT' => 0.033,    // approx
             default => 1.0,     // treat unknown currencies as AED
         };
     }
