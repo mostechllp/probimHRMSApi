@@ -68,7 +68,7 @@ class ProjectAssignmentApiController extends ApiController
 
         $employeeQuery = Employee::query();
         if ($isManagerOrLead) {
-            $employeeQuery->with([
+            $projects = $employeeQuery->with([
                 'projects' => function ($q) use ($user) {
                     $q->where(function ($sub) use ($user) {
                         $sub->where('project_manager_id', $user->id)
@@ -84,6 +84,12 @@ class ProjectAssignmentApiController extends ApiController
 
         if (!$employee) {
             return $this->error('Employee not found', 404);
+        }
+
+        // If no projects match the logged-in manager/team lead,
+        // fetch all projects assigned to this employee.
+        if ($isManagerOrLead && $employee->projects->isEmpty()) {
+            $employee->load('projects');
         }
 
         $formatEmployee = function ($emp) {
@@ -118,7 +124,7 @@ class ProjectAssignmentApiController extends ApiController
         });
 
         return $this->success([
-            'projects' => $projects
+            'projects' => $projects,
         ]);
     }
 
@@ -474,4 +480,3 @@ class ProjectAssignmentApiController extends ApiController
         return "{$mins} mins";
     }
 }
-

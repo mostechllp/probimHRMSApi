@@ -27,6 +27,7 @@ use App\Models\Holiday;
 use Carbon\Carbon;
 use Maatwebsite\Excel\Facades\Excel;
 use Barryvdh\DomPDF\Facade\Pdf;
+use App\Services\ProjectCostService;
 
 
 class ReportApiController extends ApiController
@@ -1869,185 +1870,18 @@ class ReportApiController extends ApiController
     public function projectCostTimeReport(Request $request): JsonResponse
     {
         $request->validate([
-            'month' => 'required|integer|min:1|max:12',
-            'year' => 'required|integer|min:2000',
+            'month' => 'nullable|integer|min:1|max:12',
+            'year' => 'nullable|integer|min:2000',
             'project_id' => 'nullable|exists:projects,id',
+            'filter' => 'nullable|string',
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date',
+            'search' => 'nullable|string',
         ]);
 
-        $month = (int) $request->input('month');
-        $year = (int) $request->input('year');
-        $projectId = $request->input('project_id');
+        $service = app(ProjectCostService::class);
+        $report = $service->getProjectCostReport($request->all());
 
-        // ── 1. Load projects with filtered time logs ────────────────────────
-        $projectQuery = Project::with([
-            'timeLogs' => function ($q) use ($month, $year) {
-                $q->whereYear('date', $year)->whereMonth('date', $month);
-            },
-        ]);
-
-        if ($projectId) {
-            $projectQuery->where('id', $projectId);
-        }
-
-        $projects = $projectQuery->get();
-
-        // ── 2. Collect all distinct user_ids across all projects ────────────
-        $allUserIds = $projects
-            ->flatMap(fn($p) => $p->timeLogs->pluck('user_id'))
-            ->unique()
-            ->values()
-            ->toArray();
-
-        // ── 3. Pre-load employees keyed by user_id ──────────────────────────
-        $employeesByUserId = Employee::whereIn('user_id', $allUserIds)
-            ->with([
-                'salaryPackages.salaryComponents',
-                'user.designation',
-            ])
-            ->get()
-            ->keyBy('user_id');
-
-        // ── 3b. Attendance logs for the month, keyed by "userId|date" ───────
-        $attendanceByUserDate = AttendanceLog::whereIn('userid', $allUserIds)
-            ->whereYear('log_date', $year)
-            ->whereMonth('log_date', $month)
-            ->get(['userid', 'log_date', 'timezone'])
-            ->keyBy(fn($log) => $log->userid . '|' . Carbon::parse($log->log_date)->toDateString());
-
-        // ── 4. Build the report ─────────────────────────────────────────────
-        $reportData = [];
-
-        $daysInMonth = Carbon::createFromDate($year, $month, 1)->daysInMonth;
-        $workingHoursPerDay = 9;
-        $totalMonthlyHours = $daysInMonth * $workingHoursPerDay;
-
-        // Cache: employee user_id => [ 'byCurrency' => [...], 'fallback' => pkg, 'rates' => [pkgId => rate] ]
-        $employeePackageContext = [];
-
-        foreach ($projects as $project) {
-            $totalActualMinutes = 0;
-            $totalActualCost = 0;
-            $employeeBreakdown = [];
-            $projectCurrency = 'AED';
-
-            // Group logs by user so each employee appears once
-            $logsByUser = $project->timeLogs->groupBy('user_id');
-
-            foreach ($logsByUser as $userId => $logs) {
-                $employee = $employeesByUserId->get($userId);
-
-                if (!$employee) {
-                    continue;
-                }
-
-                // ── Build package lookup once per employee ──────────────────
-                if (!isset($employeePackageContext[$userId])) {
-                    $activePackages = $employee->salaryPackages
-                        ->where('is_active', true)
-                        ->sortByDesc('id')   // if several share a currency, newest wins
-                        ->values();
-
-                    // One package per currency (INR package, AED package, ...)
-                    $byCurrency = $activePackages
-                        ->groupBy(fn($p) => strtoupper($p->currency ?: 'AED'))
-                        ->map(fn($group) => $group->first());
-
-                    // Used when the day's timezone is unknown or has no matching package
-                    $fallback = $byCurrency->get('AED') ?? $activePackages->first();
-
-                    // Hourly rate (in AED) for each package
-                    $rates = [];
-                    foreach ($activePackages as $package) {
-                        $pkgGross = (float) $package->salaryComponents->sum('value');
-                        $pkgCurrency = $package->currency ?: 'AED';
-                        $grossAed = $this->convertCurrency($pkgGross, $pkgCurrency, 'AED');
-
-                        $rates[$package->id] = ($grossAed > 0 && $totalMonthlyHours > 0)
-                            ? ($grossAed / $totalMonthlyHours)
-                            : 0;
-                    }
-
-                    $employeePackageContext[$userId] = [
-                        'byCurrency' => $byCurrency,
-                        'fallback'   => $fallback,
-                        'rates'      => $rates,
-                    ];
-                }
-
-                $ctx = $employeePackageContext[$userId];
-
-                // ── Cost each time log against the package of the day's location ──
-                $userMinutes = 0;
-                $userCostRaw = 0.0;
-
-                foreach ($logs as $log) {
-                    $minutes = (float) $log->time_taken_minutes;
-                    $date = Carbon::parse($log->date)->toDateString();
-
-                    $timezone = $attendanceByUserDate->get($userId . '|' . $date)?->timezone;
-                    $currency = $this->currencyForTimezone($timezone);
-
-                    $package = $currency ? $ctx['byCurrency']->get($currency) : null;
-                    $package = $package ?? $ctx['fallback'];
-
-                    $rate = $package ? ($ctx['rates'][$package->id] ?? 0) : 0;
-
-                    $userMinutes += $minutes;
-                    $userCostRaw += ($minutes / 60) * $rate;
-                }
-
-                $userHours = round($userMinutes / 60, 2);
-                $userCost = round($userCostRaw, 2);
-
-                $currencyBreakdown = [
-                    'AED' => [
-                        'currency' => 'AED',
-                        'hours' => $userHours,
-                        'cost' => $userCost,
-                    ]
-                ];
-
-                $totalActualMinutes += $userMinutes;
-                $totalActualCost += $userCost;
-
-                $employeeBreakdown[] = [
-                    'employee_id' => $employee->id,
-                    'user_id' => $userId,
-                    'name' => trim($employee->first_name . ' ' . $employee->last_name),
-                    'designation' => $employee->user->designation->name ?? 'N/A',
-                    'actual_time_logged_hours' => round($userMinutes / 60, 2),
-                    'actual_cost' => $userCost,
-                    'cost_currency' => $projectCurrency,
-                    'currency_breakdown' => array_values(array_map(function ($row) {
-                        $row['hours'] = round($row['hours'], 2);
-                        $row['cost'] = round($row['cost'], 2);
-                        return $row;
-                    }, $currencyBreakdown)),
-                ];
-            }
-
-            $reportData[] = [
-                'project_id' => $project->id,
-                'project_name' => $project->name,
-                'currency' => $projectCurrency,
-                'planned_total_hours' => $project->total_hours,
-                'planned_total_cost' => $project->total_cost,
-                'actual_time_logged_hours' => round($totalActualMinutes / 60, 2),
-                'actual_cost' => round($totalActualCost, 2),
-                'conversion_rate_note' => 'Employee costs in a different salary currency were converted to '
-                    . $projectCurrency . ' using ' . self::AED_INR_RATE_DATE . "'s reference rate "
-                    . '(1 AED = ' . self::AED_TO_INR_RATE . ' INR) before being totalled.'
-                    . ($project->currency ? '' : " (project had no currency set — defaulted to {$projectCurrency})."),
-                'employee_breakdown' => $employeeBreakdown,
-            ];
-        }
-
-        return $this->success([
-            'report_period' => [
-                'month' => $month,
-                'year' => $year,
-            ],
-            'projects' => $reportData,
-        ], 'Project cost and time report fetched successfully.');
+        return $this->success($report, 'Project cost and time report fetched successfully.');
     }
 }

@@ -30,6 +30,8 @@ use App\Http\Controllers\Api\Admin\RoleApiController;
 use App\Http\Controllers\Api\Admin\ModuleApiController;
 use App\Http\Controllers\Api\Admin\UserApiController;
 use App\Http\Controllers\Api\Admin\ProjectApiController;
+use App\Http\Controllers\Api\Admin\ProjectCostApiController;
+use App\Http\Controllers\Api\Admin\TimesheetApiController;
 use App\Http\Controllers\Api\Admin\ProjectAssignmentApiController;
 use App\Http\Controllers\Api\Admin\EmployeeBankDetailApiController;
 use App\Http\Controllers\Api\Admin\EmployeeSalaryComponentApiController;
@@ -156,6 +158,44 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'admin'], function () {
     Route::get('shareable-users', [DocumentApiController::class, 'getShareableUsers']);
 
     // Projects
+    // Project Cost (Super Admin & Management only)
+    Route::get('projects/cost/export', [ProjectCostApiController::class, 'export']);
+    Route::get('projects/cost/export/excel', [ProjectCostApiController::class, 'exportExcel']);
+    Route::get('projects/cost/export/pdf', [ProjectCostApiController::class, 'exportPdf']);
+    Route::get('projects/cost/{project}', [ProjectCostApiController::class, 'show']);
+    Route::get('projects/cost', [ProjectCostApiController::class, 'index']);
+
+    // Direct project-cost alias routes
+    Route::get('project-cost/export', [ProjectCostApiController::class, 'export']);
+    Route::get('project-cost/export/excel', [ProjectCostApiController::class, 'exportExcel']);
+    Route::get('project-cost/export/pdf', [ProjectCostApiController::class, 'exportPdf']);
+    Route::get('project-cost/{project}', [ProjectCostApiController::class, 'show']);
+    Route::get('project-cost', [ProjectCostApiController::class, 'index']);
+
+    // Timesheets & Hours (Super Admin, Management, Line Managers, Employees)
+    Route::get('timesheets/export', [TimesheetApiController::class, 'export']);
+    Route::get('timesheets/export/excel', [TimesheetApiController::class, 'exportExcel']);
+    Route::get('timesheets/export/pdf', [TimesheetApiController::class, 'exportPdf']);
+    Route::post('timesheets/bulk-approve', [TimesheetApiController::class, 'bulkApprove']);
+    Route::post('timesheets/bulk-reject', [TimesheetApiController::class, 'bulkReject']);
+    Route::post('timesheets/{id}/approve', [TimesheetApiController::class, 'approve']);
+    Route::post('timesheets/{id}/reject', [TimesheetApiController::class, 'reject']);
+    Route::apiResource('timesheets', TimesheetApiController::class);
+
+    // Projects Timesheets alias
+    Route::get('projects/timesheets/export', [TimesheetApiController::class, 'export']);
+    Route::get('projects/timesheets/export/excel', [TimesheetApiController::class, 'exportExcel']);
+    Route::get('projects/timesheets/export/pdf', [TimesheetApiController::class, 'exportPdf']);
+    Route::post('projects/timesheets/bulk-approve', [TimesheetApiController::class, 'bulkApprove']);
+    Route::post('projects/timesheets/bulk-reject', [TimesheetApiController::class, 'bulkReject']);
+    Route::post('projects/timesheets/{id}/approve', [TimesheetApiController::class, 'approve']);
+    Route::post('projects/timesheets/{id}/reject', [TimesheetApiController::class, 'reject']);
+    Route::get('projects/timesheets/{id}', [TimesheetApiController::class, 'show']);
+    Route::put('projects/timesheets/{id}', [TimesheetApiController::class, 'update']);
+    Route::delete('projects/timesheets/{id}', [TimesheetApiController::class, 'destroy']);
+    Route::post('projects/timesheets', [TimesheetApiController::class, 'store']);
+    Route::get('projects/timesheets', [TimesheetApiController::class, 'index']);
+
     Route::get('projects/eligible-managers', [ProjectApiController::class, 'getEligibleManagers']);
     Route::get('projects/eligible-team-leads', [ProjectApiController::class, 'getEligibleTeamLeads']);
     Route::apiResource('projects', ProjectApiController::class);
@@ -384,6 +424,13 @@ Route::group(['middleware' => 'auth:api', 'prefix' => 'employee'], function () {
     Route::delete('attendance-requests/{attendanceRequest}', [EmployeeAttendanceRequestApiController::class, 'destroy']);
 
     Route::get('project-assignments/{id}', [ProjectAssignmentApiController::class, 'show']);
+
+    // Timesheets (Employee Portal)
+    Route::get('timesheets', [TimesheetApiController::class, 'index']);
+    Route::post('timesheets', [TimesheetApiController::class, 'store']);
+    Route::get('timesheets/{id}', [TimesheetApiController::class, 'show']);
+    Route::put('timesheets/{id}', [TimesheetApiController::class, 'update']);
+    Route::delete('timesheets/{id}', [TimesheetApiController::class, 'destroy']);
 
 
     //Assets

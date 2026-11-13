@@ -261,7 +261,7 @@ class GenerateMonthlyPayroll extends Command
                 'pay_period_month' => (int) $monthDate->format('m'),
                 'pay_period_year' => (int) $monthDate->format('Y'),
                 'period_start' => $startDate,
-                'period_end' =>$endDate,
+                'period_end' => $endDate,
                 'payment_date' => $monthDate->copy()->addMonth()->day(5)->format('Y-m-d'),
                 'payment_mode' => 'Bank Transfer',
                 'total_working_days' => $workingDays,
